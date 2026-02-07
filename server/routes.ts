@@ -1,16 +1,350 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
+import session from "express-session";
 import { storage } from "./storage";
+import { scrypt, randomBytes, timingSafeEqual } from "crypto";
+import { promisify } from "util";
+
+const scryptAsync = promisify(scrypt);
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16).toString("hex");
+  const buf = (await scryptAsync(password, salt, 64)) as Buffer;
+  return `${buf.toString("hex")}.${salt}`;
+}
+
+async function comparePassword(supplied: string, stored: string): Promise<boolean> {
+  const [hashedPassword, salt] = stored.split(".");
+  const buf = (await scryptAsync(supplied, salt, 64)) as Buffer;
+  return timingSafeEqual(Buffer.from(hashedPassword, "hex"), buf);
+}
+
+declare module "express-session" {
+  interface SessionData {
+    userId: string;
+  }
+}
+
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (!req.session.userId) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+  next();
+}
+
+function requireRole(...roles: string[]) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const user = await storage.getUser(req.session.userId);
+    if (!user || !roles.includes(user.role)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    (req as any).currentUser = user;
+    next();
+  };
+}
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // put application routes here
-  // prefix all routes with /api
+  app.use(
+    session({
+      secret: process.env.SESSION_SECRET || "subsmanager-secret-key",
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        httpOnly: true,
+        secure: false,
+        sameSite: "lax",
+      },
+    })
+  );
 
-  // use storage to perform CRUD operations on the storage interface
-  // e.g. storage.insertUser(user) or storage.getUserByUsername(username)
+  app.post("/api/auth/signup", async (req: Request, res: Response) => {
+    try {
+      const { name, email, password, role } = req.body;
+
+      if (!name || !email || !password || !role) {
+        return res.status(400).json({ message: "All fields are required" });
+      }
+
+      if (!["admin", "internal", "user"].includes(role)) {
+        return res.status(400).json({ message: "Invalid role" });
+      }
+
+      if (password.length < 8 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+        return res.status(400).json({ message: "Password must be 8+ chars with uppercase, lowercase, and special character" });
+      }
+
+      const existing = await storage.getUserByEmail(email);
+      if (existing) {
+        return res.status(400).json({ message: "Email already in use" });
+      }
+
+      const hashedPassword = await hashPassword(password);
+      const user = await storage.createUser({
+        name,
+        email,
+        password: hashedPassword,
+        role,
+      });
+
+      req.session.userId = user.id;
+      const { password: _, ...safeUser } = user;
+      res.json(safeUser);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/auth/login", async (req: Request, res: Response) => {
+    try {
+      const { email, password } = req.body;
+
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password are required" });
+      }
+
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      const valid = await comparePassword(password, user.password);
+      if (!valid) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      req.session.userId = user.id;
+      const { password: _, ...safeUser } = user;
+      res.json(safeUser);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/auth/me", async (req: Request, res: Response) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const user = await storage.getUser(req.session.userId);
+    if (!user) {
+      return res.status(401).json({ message: "User not found" });
+    }
+    const { password: _, ...safeUser } = user;
+    res.json(safeUser);
+  });
+
+  app.post("/api/auth/logout", (req: Request, res: Response) => {
+    req.session.destroy(() => {
+      res.json({ ok: true });
+    });
+  });
+
+  app.get("/api/users/internals", requireRole("admin"), async (_req: Request, res: Response) => {
+    const internals = await storage.getInternalUsers();
+    const safe = internals.map(({ password: _, ...u }) => u);
+    res.json(safe);
+  });
+
+  app.get("/api/products", requireAuth, async (_req: Request, res: Response) => {
+    const allProducts = await storage.getProducts();
+    res.json(allProducts);
+  });
+
+  app.post("/api/products", requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const { name, type, salesPrice, costPrice, variants, companyName } = req.body;
+
+      if (!name || !type || !salesPrice || !costPrice) {
+        return res.status(400).json({ message: "Name, type, sales price, and cost price are required" });
+      }
+
+      const product = await storage.createProduct({
+        name,
+        type,
+        salesPrice,
+        costPrice,
+        variants: variants || [],
+        adminId: user.id,
+        status: "draft",
+        companyName: companyName || null,
+      });
+      res.json(product);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/products/:id/assign", requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const product = await storage.getProduct(req.params.id);
+
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+      if (product.adminId !== user.id) {
+        return res.status(403).json({ message: "Not your product" });
+      }
+
+      const { internalId } = req.body;
+      if (!internalId) {
+        return res.status(400).json({ message: "Internal ID is required" });
+      }
+
+      const updated = await storage.updateProduct(req.params.id, {
+        assignedInternalId: internalId,
+        status: "assigned",
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/products/:id/publish", requireRole("internal"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const product = await storage.getProduct(req.params.id);
+
+      if (!product) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+      if (product.assignedInternalId !== user.id) {
+        return res.status(403).json({ message: "Not assigned to you" });
+      }
+
+      const updated = await storage.updateProduct(req.params.id, {
+        status: "published",
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/plans", requireAuth, async (_req: Request, res: Response) => {
+    const allPlans = await storage.getPlans();
+    res.json(allPlans);
+  });
+
+  app.post("/api/plans", requireRole("internal"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const { productId, name, price, billingPeriod, minQuantity, startDate, endDate, pausable, renewable, closable, autoClose } = req.body;
+
+      if (!productId || !name || !price || !billingPeriod) {
+        return res.status(400).json({ message: "Product ID, name, price, and billing period are required" });
+      }
+
+      const product = await storage.getProduct(productId);
+      if (!product || product.assignedInternalId !== user.id) {
+        return res.status(403).json({ message: "Not assigned to you" });
+      }
+
+      const plan = await storage.createPlan({
+        productId,
+        name,
+        price,
+        billingPeriod,
+        minQuantity: Number(minQuantity) || 1,
+        startDate: startDate || null,
+        endDate: endDate || null,
+        pausable: !!pausable,
+        renewable: renewable !== false,
+        closable: closable !== false,
+        autoClose: !!autoClose,
+      });
+      res.json(plan);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/subscriptions", requireAuth, async (_req: Request, res: Response) => {
+    const allSubs = await storage.getSubscriptions();
+    res.json(allSubs);
+  });
+
+  app.post("/api/subscriptions", requireRole("user"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const { productId, planId, quantity } = req.body;
+
+      if (!productId || !planId) {
+        return res.status(400).json({ message: "Product ID and plan ID are required" });
+      }
+
+      const today = new Date().toISOString().split("T")[0];
+      const sub = await storage.createSubscription({
+        userId: user.id,
+        productId,
+        planId,
+        quantity: Number(quantity) || 1,
+        status: "active",
+        startDate: today,
+      });
+
+      const plan = (await storage.getPlans()).find((p) => p.id === sub.planId);
+      const product = plan ? await storage.getProduct(plan.productId) : null;
+
+      const dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + 30);
+
+      await storage.createInvoice({
+        subscriptionId: sub.id,
+        userId: user.id,
+        amount: String(Number(plan?.price || 0) * sub.quantity),
+        status: "pending",
+        dueDate: dueDate.toISOString().split("T")[0],
+        lines: [
+          {
+            description: `${product?.name || "Product"} - ${plan?.name || "Plan"} x${sub.quantity}`,
+            amount: Number(plan?.price || 0) * sub.quantity,
+          },
+        ],
+        tax: String(Number(plan?.price || 0) * sub.quantity * 0.1),
+      });
+
+      res.json(sub);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/invoices", requireAuth, async (_req: Request, res: Response) => {
+    const allInvoices = await storage.getInvoices();
+    res.json(allInvoices);
+  });
+
+  app.patch("/api/invoices/:id/pay", requireRole("user"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const invoice = await storage.getInvoice(req.params.id);
+
+      if (!invoice) {
+        return res.status(404).json({ message: "Invoice not found" });
+      }
+      if (invoice.userId !== user.id) {
+        return res.status(403).json({ message: "Not your invoice" });
+      }
+
+      const today = new Date().toISOString().split("T")[0];
+      const updated = await storage.updateInvoice(req.params.id, {
+        status: "paid",
+        paidDate: today,
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
 
   return httpServer;
 }
