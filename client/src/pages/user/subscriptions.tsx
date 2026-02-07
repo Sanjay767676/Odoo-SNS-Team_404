@@ -1,13 +1,26 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Layers, Calendar, Hash, Tag, Percent } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Layers, Calendar, Hash, Tag, Percent, ArrowUpCircle, CalendarClock } from "lucide-react";
 import type { Subscription, Product, Plan } from "@shared/schema";
 
 export default function UserSubscriptions() {
   const { user } = useAuth();
+  const [upgradeSub, setUpgradeSub] = useState<Subscription | null>(null);
+  const [selectedUpgradePlan, setSelectedUpgradePlan] = useState("");
 
   const { data: subscriptions, isLoading: loadingSubs } = useQuery<Subscription[]>({
     queryKey: ["/api/subscriptions"],
@@ -25,6 +38,30 @@ export default function UserSubscriptions() {
 
   const getProduct = (id: string) => products?.find((p) => p.id === id);
   const getPlan = (id: string) => plans?.find((p) => p.id === id);
+
+  const getNextBilling = (sub: Subscription, plan: Plan | undefined) => {
+    if (sub.status !== "active" || !plan) return null;
+    const start = new Date(sub.startDate);
+    const now = new Date();
+    const period = plan.billingPeriod;
+    let next = new Date(start);
+    while (next <= now) {
+      if (period === "monthly") next.setMonth(next.getMonth() + 1);
+      else if (period === "quarterly") next.setMonth(next.getMonth() + 3);
+      else if (period === "yearly") next.setFullYear(next.getFullYear() + 1);
+      else next.setMonth(next.getMonth() + 1);
+    }
+    return next;
+  };
+
+  const formatDate = (d: Date) => {
+    return d.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
+  };
+
+  const getUpgradePlans = (sub: Subscription) => {
+    const productPlans = plans?.filter((p) => p.productId === sub.productId) || [];
+    return productPlans.filter((p) => p.id !== sub.planId);
+  };
 
   const isLoading = loadingSubs;
 
@@ -118,18 +155,124 @@ export default function UserSubscriptions() {
                         )}
                       </div>
                     </div>
-                    <Badge
-                      className={`shrink-0 no-default-hover-elevate no-default-active-elevate ${statusColors[sub.status] || statusColors.active}`}
-                    >
-                      {sub.status}
-                    </Badge>
+                    <div className="flex flex-col items-end gap-2 shrink-0">
+                      <Badge
+                        className={`no-default-hover-elevate no-default-active-elevate ${statusColors[sub.status] || statusColors.active}`}
+                      >
+                        {sub.status}
+                      </Badge>
+                      {sub.status === "active" && getUpgradePlans(sub).length > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setUpgradeSub(sub);
+                            setSelectedUpgradePlan("");
+                          }}
+                          data-testid={`button-upgrade-${sub.id}`}
+                        >
+                          <ArrowUpCircle className="h-3.5 w-3.5 mr-1" />
+                          Upgrade Plan
+                        </Button>
+                      )}
+                    </div>
                   </div>
+                  {(() => {
+                    const nextBill = getNextBilling(sub, plan);
+                    if (!nextBill || !plan) return null;
+                    const amt = sub.total ? Number(sub.total) : Number(plan.price) * sub.quantity;
+                    return (
+                      <div className="mt-3 flex items-center gap-2 text-xs bg-muted/50 rounded-md px-3 py-2" data-testid={`text-next-billing-${sub.id}`}>
+                        <CalendarClock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        <span className="text-muted-foreground">
+                          Next billing: <span className="font-medium text-foreground">{formatDate(nextBill)}</span>
+                          {" "}
+                          <span className="font-semibold text-foreground">${amt.toFixed(2)}</span>
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             );
           })}
         </div>
       )}
+      <Dialog open={!!upgradeSub} onOpenChange={(v) => { if (!v) { setUpgradeSub(null); setSelectedUpgradePlan(""); } }}>
+        <DialogContent className="max-w-md" data-testid="dialog-upgrade-plan">
+          <DialogHeader>
+            <DialogTitle>Upgrade Plan</DialogTitle>
+            <DialogDescription>
+              Choose a new plan for {upgradeSub ? getProduct(upgradeSub.productId)?.name : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {upgradeSub && (() => {
+            const currentPlan = getPlan(upgradeSub.planId);
+            const availablePlans = getUpgradePlans(upgradeSub);
+            const newPlan = plans?.find((p) => p.id === selectedUpgradePlan);
+            return (
+              <div className="space-y-4 mt-2">
+                <div className="bg-muted/50 rounded-md p-3 space-y-1">
+                  <p className="text-xs text-muted-foreground">Current Plan</p>
+                  <p className="text-sm font-medium">
+                    {currentPlan?.name} - ${Number(currentPlan?.price || 0).toFixed(2)}/{currentPlan?.billingPeriod}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Select New Plan</Label>
+                  <Select value={selectedUpgradePlan} onValueChange={setSelectedUpgradePlan}>
+                    <SelectTrigger data-testid="select-upgrade-plan">
+                      <SelectValue placeholder="Choose a plan to upgrade to" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availablePlans.map((p) => (
+                        <SelectItem key={p.id} value={p.id} data-testid={`option-upgrade-plan-${p.id}`}>
+                          {p.name} - ${Number(p.price).toFixed(2)}/{p.billingPeriod}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {newPlan && (
+                  <div className="rounded-md border p-3 space-y-2 text-sm" data-testid="upgrade-preview">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">New Price</span>
+                      <span className="font-semibold">${Number(newPlan.price).toFixed(2)}/{newPlan.billingPeriod}</span>
+                    </div>
+                    {Number(newPlan.price) > Number(currentPlan?.price || 0) && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">Difference</span>
+                        <span className="text-chart-4 font-medium">
+                          +${(Number(newPlan.price) - Number(currentPlan?.price || 0)).toFixed(2)}/{newPlan.billingPeriod}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <Button
+                  className="w-full"
+                  disabled={!selectedUpgradePlan}
+                  onClick={() => {
+                    setUpgradeSub(null);
+                    setSelectedUpgradePlan("");
+                  }}
+                  data-testid="button-confirm-upgrade"
+                >
+                  <ArrowUpCircle className="h-4 w-4 mr-2" />
+                  Confirm Upgrade
+                </Button>
+                <p className="text-xs text-center text-muted-foreground">
+                  Plan changes will take effect on your next billing cycle.
+                </p>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

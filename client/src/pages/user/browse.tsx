@@ -16,7 +16,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShoppingBag, Layers, Loader2, CheckCircle2, Building2, Tag, Percent } from "lucide-react";
+import { ShoppingBag, Loader2, CheckCircle2, Building2, Tag, Percent } from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import type { Product, Plan } from "@shared/schema";
 
 export default function UserBrowse() {
@@ -164,9 +165,11 @@ export default function UserBrowse() {
               >
                 <CardHeader className="pb-3">
                   <div className="flex items-start gap-3">
-                    <div className="p-2.5 rounded-md bg-primary/10 shrink-0">
-                      <Layers className="h-5 w-5 text-primary" />
-                    </div>
+                    <Avatar className="h-10 w-10 rounded-md shrink-0" data-testid={`avatar-product-${product.id}`}>
+                      <AvatarFallback className="rounded-md bg-primary/10 text-primary text-sm font-bold">
+                        {(product.companyName || product.name).slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
                     <div className="min-w-0 flex-1">
                       <h3 className="font-semibold truncate">{product.name}</h3>
                       {product.companyName && (
