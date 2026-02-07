@@ -16,7 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShoppingBag, Layers, Loader2, CheckCircle2, Building2 } from "lucide-react";
+import { ShoppingBag, Layers, Loader2, CheckCircle2, Building2, Tag, Percent } from "lucide-react";
 import type { Product, Plan } from "@shared/schema";
 
 export default function UserBrowse() {
@@ -26,6 +26,9 @@ export default function UserBrowse() {
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [subscribed, setSubscribed] = useState(false);
+  const [discountCode, setDiscountCode] = useState("");
+  const [discountValidation, setDiscountValidation] = useState<{ valid: boolean; label?: string; type?: string; value?: number } | null>(null);
+  const [validatingCode, setValidatingCode] = useState(false);
 
   const { data: products, isLoading: loadingProducts } = useQuery<Product[]>({
     queryKey: ["/api/products"],
@@ -40,12 +43,60 @@ export default function UserBrowse() {
   const getProductPlans = (productId: string) =>
     plans?.filter((p) => p.productId === productId) || [];
 
+  const validateDiscount = async () => {
+    if (!discountCode.trim()) {
+      setDiscountValidation(null);
+      return;
+    }
+    setValidatingCode(true);
+    try {
+      const res = await apiRequest("POST", "/api/discount-codes/validate", { code: discountCode.trim() });
+      const data = await res.json();
+      setDiscountValidation(data);
+      if (!data.valid) {
+        toast({ title: "Invalid code", description: data.message || "This discount code is not valid.", variant: "destructive" });
+      }
+    } catch {
+      setDiscountValidation({ valid: false });
+    } finally {
+      setValidatingCode(false);
+    }
+  };
+
+  const selectedPlan = plans?.find((p) => p.id === selectedPlanId);
+  const basePrice = Number(selectedPlan?.price || 0) * (Number(quantity) || 1);
+  const taxPercent = Number(selectedPlan?.taxPercent || 18);
+
+  const getDiscountAmount = () => {
+    if (discountValidation?.valid && discountValidation.type && discountValidation.value) {
+      if (discountValidation.type === "percent_first_month") {
+        return basePrice * discountValidation.value / 100;
+      } else if (discountValidation.type === "fixed") {
+        return Math.min(discountValidation.value, basePrice);
+      }
+    }
+    if (selectedPlan?.discountType && selectedPlan?.discountValue) {
+      if (selectedPlan.discountType === "percent_first_month") {
+        return basePrice * Number(selectedPlan.discountValue) / 100;
+      } else if (selectedPlan.discountType === "fixed") {
+        return Math.min(Number(selectedPlan.discountValue), basePrice);
+      }
+    }
+    return 0;
+  };
+
+  const discountAmt = getDiscountAmount();
+  const subtotal = basePrice - discountAmt;
+  const taxAmt = subtotal * taxPercent / 100;
+  const total = subtotal + taxAmt;
+
   const subscribeMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/subscriptions", {
         productId: selectedProduct?.id,
         planId: selectedPlanId,
         quantity: Number(quantity) || 1,
+        discountCode: discountCode.trim() || null,
       });
       return res.json();
     },
@@ -65,6 +116,8 @@ export default function UserBrowse() {
     setSelectedPlanId("");
     setQuantity("1");
     setSubscribed(false);
+    setDiscountCode("");
+    setDiscountValidation(null);
   };
 
   return (
@@ -221,6 +274,62 @@ export default function UserBrowse() {
                 />
               </div>
 
+              <div className="space-y-2">
+                <Label>Discount Code (Optional)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Enter code e.g. FIRST10"
+                    value={discountCode}
+                    onChange={(e) => {
+                      setDiscountCode(e.target.value);
+                      setDiscountValidation(null);
+                    }}
+                    data-testid="input-discount-code"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={validateDiscount}
+                    disabled={!discountCode.trim() || validatingCode}
+                    data-testid="button-validate-code"
+                  >
+                    {validatingCode ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply"}
+                  </Button>
+                </div>
+                {discountValidation?.valid && (
+                  <div className="flex items-center gap-2 text-sm text-chart-2" data-testid="text-discount-applied">
+                    <Tag className="h-3.5 w-3.5" />
+                    <span>{discountValidation.label}</span>
+                  </div>
+                )}
+              </div>
+
+              {selectedPlanId && (
+                <div className="rounded-md border p-3 space-y-2 text-sm" data-testid="price-breakdown">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Subtotal</span>
+                    <span>${basePrice.toFixed(2)}</span>
+                  </div>
+                  {discountAmt > 0 && (
+                    <div className="flex justify-between text-chart-2">
+                      <span className="flex items-center gap-1">
+                        <Percent className="h-3 w-3" />
+                        Discount
+                      </span>
+                      <span>-${discountAmt.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Tax ({taxPercent}%)</span>
+                    <span>${taxAmt.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold border-t pt-2">
+                    <span>Total</span>
+                    <span>${total.toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+
               <Button
                 className="w-full"
                 onClick={() => subscribeMutation.mutate()}
@@ -230,7 +339,7 @@ export default function UserBrowse() {
                 {subscribeMutation.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  "Subscribe"
+                  `Subscribe - $${total.toFixed(2)}`
                 )}
               </Button>
             </div>

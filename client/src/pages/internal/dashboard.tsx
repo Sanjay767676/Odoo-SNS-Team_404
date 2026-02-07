@@ -31,6 +31,7 @@ const planSchema = z.object({
   minQuantity: z.string().default("1"),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
+  taxPercent: z.string().default("18"),
 });
 
 type PlanForm = z.infer<typeof planSchema>;
@@ -46,6 +47,7 @@ export default function InternalDashboard() {
     closable: true,
     autoClose: false,
   });
+  const [discountType, setDiscountType] = useState("");
 
   const { data: products, isLoading: loadingProducts } = useQuery<Product[]>({
     queryKey: ["/api/products"],
@@ -61,16 +63,25 @@ export default function InternalDashboard() {
 
   const form = useForm<PlanForm>({
     resolver: zodResolver(planSchema),
-    defaultValues: { name: "", price: "", billingPeriod: "monthly", minQuantity: "1", startDate: "", endDate: "" },
+    defaultValues: { name: "", price: "", billingPeriod: "monthly", minQuantity: "1", startDate: "", endDate: "", taxPercent: "18" },
   });
 
   const createPlanMutation = useMutation({
     mutationFn: async (data: PlanForm) => {
+      let discountValue: number | null = null;
+      if (discountType === "percent_first_month_10") {
+        discountValue = 10;
+      } else if (discountType === "fixed_200") {
+        discountValue = 200;
+      }
       const res = await apiRequest("POST", "/api/plans", {
         ...data,
         productId: selectedProduct?.id,
         minQuantity: Number(data.minQuantity) || 1,
         ...planOptions,
+        discountType: discountType === "percent_first_month_10" ? "percent_first_month" : discountType === "fixed_200" ? "fixed" : null,
+        discountValue,
+        taxPercent: Number(data.taxPercent) || 18,
       });
       return res.json();
     },
@@ -80,6 +91,7 @@ export default function InternalDashboard() {
       setPlanDialogOpen(false);
       form.reset();
       setPlanOptions({ pausable: false, renewable: true, closable: true, autoClose: false });
+      setDiscountType("");
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -166,12 +178,26 @@ export default function InternalDashboard() {
                     <div className="space-y-2">
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Plans</p>
                       {productPlans.map((plan) => (
-                        <div key={plan.id} className="flex items-center justify-between bg-muted/50 rounded-md px-3 py-2 text-sm">
-                          <div className="flex items-center gap-2">
-                            <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span className="font-medium">{plan.name}</span>
+                        <div key={plan.id} className="bg-muted/50 rounded-md px-3 py-2 text-sm space-y-1">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span className="font-medium">{plan.name}</span>
+                            </div>
+                            <span>${Number(plan.price).toFixed(2)}/{plan.billingPeriod}</span>
                           </div>
-                          <span>${Number(plan.price).toFixed(2)}/{plan.billingPeriod}</span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {plan.discountType && (
+                              <Badge variant="secondary" className="text-[9px]" data-testid={`badge-plan-discount-${plan.id}`}>
+                                {plan.discountType === "percent_first_month"
+                                  ? `${plan.discountValue}% off 1st mo`
+                                  : `Flat ${plan.discountValue} off`}
+                              </Badge>
+                            )}
+                            <Badge variant="secondary" className="text-[9px]" data-testid={`badge-plan-tax-${plan.id}`}>
+                              Tax: {plan.taxPercent || "18"}%
+                            </Badge>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -236,6 +262,33 @@ export default function InternalDashboard() {
                               <Label>End Date</Label>
                               <Input type="date" {...form.register("endDate")} data-testid="input-end-date" />
                             </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label>Discount (Optional)</Label>
+                            <Select value={discountType} onValueChange={setDiscountType}>
+                              <SelectTrigger data-testid="select-discount">
+                                <SelectValue placeholder="No discount" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">No discount</SelectItem>
+                                <SelectItem value="percent_first_month_10">10% off first month</SelectItem>
+                                <SelectItem value="fixed_200">Fixed &#8377;200 off</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label>Tax Percentage (%)</Label>
+                            <div className="flex items-center gap-2">
+                              <Input type="number" step="0.1" min="0" max="100" {...form.register("taxPercent")} data-testid="input-tax-percent" />
+                              <Badge variant="secondary" className="shrink-0 no-default-hover-elevate no-default-active-elevate">GST</Badge>
+                            </div>
+                            {form.watch("price") && form.watch("taxPercent") && (
+                              <p className="text-xs text-muted-foreground" data-testid="text-tax-preview">
+                                Tax on ${Number(form.watch("price") || 0).toFixed(2)}: ${(Number(form.watch("price") || 0) * Number(form.watch("taxPercent") || 18) / 100).toFixed(2)} ({form.watch("taxPercent")}%)
+                              </p>
+                            )}
                           </div>
 
                           <div className="space-y-3">

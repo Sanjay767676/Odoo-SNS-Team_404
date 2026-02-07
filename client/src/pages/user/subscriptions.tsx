@@ -3,7 +3,7 @@ import { useAuth } from "@/lib/auth";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Layers, Calendar, Hash } from "lucide-react";
+import { Layers, Calendar, Hash, Tag, Percent } from "lucide-react";
 import type { Subscription, Product, Plan } from "@shared/schema";
 
 export default function UserSubscriptions() {
@@ -92,6 +92,30 @@ export default function UserSubscriptions() {
                           )}
                           <span>Qty: {sub.quantity}</span>
                         </div>
+                        {(Number(sub.discountAmount || 0) > 0 || Number(sub.taxAmount || 0) > 0 || sub.total) && (
+                          <div className="flex items-center gap-3 mt-2 text-xs flex-wrap">
+                            {Number(sub.discountAmount || 0) > 0 && (
+                              <div className="flex items-center gap-1 text-chart-2" data-testid={`text-sub-discount-${sub.id}`}>
+                                <Tag className="h-3 w-3" />
+                                <span>-${Number(sub.discountAmount).toFixed(2)} discount</span>
+                                {sub.discountCode && (
+                                  <Badge variant="secondary" className="text-[9px] ml-1">{sub.discountCode}</Badge>
+                                )}
+                              </div>
+                            )}
+                            {Number(sub.taxAmount || 0) > 0 && (
+                              <div className="flex items-center gap-1 text-muted-foreground" data-testid={`text-sub-tax-${sub.id}`}>
+                                <Percent className="h-3 w-3" />
+                                <span>${Number(sub.taxAmount).toFixed(2)} tax ({sub.taxPercent}%)</span>
+                              </div>
+                            )}
+                            {sub.total && (
+                              <span className="font-semibold text-foreground" data-testid={`text-sub-total-${sub.id}`}>
+                                Total: ${Number(sub.total).toFixed(2)}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <Badge

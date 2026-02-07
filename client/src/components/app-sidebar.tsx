@@ -22,6 +22,7 @@ import {
   User,
   LogOut,
   Layers,
+  FileCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -30,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 const adminMenuItems = [
   { title: "Dashboard", url: "/admin", icon: LayoutDashboard },
   { title: "Products", url: "/admin/products", icon: Package },
+  { title: "Quotation Templates", url: "/admin/quotation-templates", icon: FileCheck },
   { title: "Reports", url: "/admin/reports", icon: BarChart3 },
 ];
 

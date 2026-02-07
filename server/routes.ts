@@ -46,6 +46,13 @@ function requireRole(...roles: string[]) {
   };
 }
 
+const VALID_DISCOUNT_CODES: Record<string, { type: string; value: number; label: string }> = {
+  "FIRST10": { type: "percent_first_month", value: 10, label: "10% off first month" },
+  "SAVE200": { type: "fixed", value: 200, label: "Flat 200 off" },
+  "WELCOME15": { type: "percent_first_month", value: 15, label: "15% off first month" },
+  "FLAT500": { type: "fixed", value: 500, label: "Flat 500 off" },
+};
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -237,7 +244,7 @@ export async function registerRoutes(
   app.post("/api/plans", requireRole("internal"), async (req: Request, res: Response) => {
     try {
       const user = (req as any).currentUser;
-      const { productId, name, price, billingPeriod, minQuantity, startDate, endDate, pausable, renewable, closable, autoClose } = req.body;
+      const { productId, name, price, billingPeriod, minQuantity, startDate, endDate, pausable, renewable, closable, autoClose, discountType, discountValue, taxPercent } = req.body;
 
       if (!productId || !name || !price || !billingPeriod) {
         return res.status(400).json({ message: "Product ID, name, price, and billing period are required" });
@@ -260,6 +267,9 @@ export async function registerRoutes(
         renewable: renewable !== false,
         closable: closable !== false,
         autoClose: !!autoClose,
+        discountType: discountType || null,
+        discountValue: discountValue ? String(discountValue) : null,
+        taxPercent: taxPercent ? String(taxPercent) : "18",
       });
       res.json(plan);
     } catch (err: any) {
@@ -275,46 +285,119 @@ export async function registerRoutes(
   app.post("/api/subscriptions", requireRole("user"), async (req: Request, res: Response) => {
     try {
       const user = (req as any).currentUser;
-      const { productId, planId, quantity } = req.body;
+      const { productId, planId, quantity, discountCode } = req.body;
 
       if (!productId || !planId) {
         return res.status(400).json({ message: "Product ID and plan ID are required" });
       }
+
+      const plan = (await storage.getPlans()).find((p) => p.id === planId);
+      const product = plan ? await storage.getProduct(plan.productId) : null;
+      const qty = Number(quantity) || 1;
+      const basePrice = Number(plan?.price || 0) * qty;
+
+      let appliedDiscountType: string | null = null;
+      let appliedDiscountValue: number | null = null;
+      let discountAmount = 0;
+      let discountLabel: string | null = null;
+
+      if (plan?.discountType && plan?.discountValue) {
+        appliedDiscountType = plan.discountType;
+        appliedDiscountValue = Number(plan.discountValue);
+        if (plan.discountType === "percent_first_month") {
+          discountAmount = basePrice * Number(plan.discountValue) / 100;
+          discountLabel = `${plan.discountValue}% off first month`;
+        } else if (plan.discountType === "fixed") {
+          discountAmount = Math.min(Number(plan.discountValue), basePrice);
+          discountLabel = `Flat ${plan.discountValue} off`;
+        }
+      }
+
+      if (discountCode) {
+        const codeUpper = discountCode.toUpperCase().trim();
+        const codeDiscount = VALID_DISCOUNT_CODES[codeUpper];
+        if (codeDiscount) {
+          appliedDiscountType = codeDiscount.type;
+          appliedDiscountValue = codeDiscount.value;
+          discountLabel = codeDiscount.label;
+          if (codeDiscount.type === "percent_first_month") {
+            discountAmount = basePrice * codeDiscount.value / 100;
+          } else if (codeDiscount.type === "fixed") {
+            discountAmount = Math.min(codeDiscount.value, basePrice);
+          }
+        }
+      }
+
+      const subtotal = basePrice - discountAmount;
+      const taxPercent = Number(plan?.taxPercent || 18);
+      const taxAmount = subtotal * taxPercent / 100;
+      const total = subtotal + taxAmount;
 
       const today = new Date().toISOString().split("T")[0];
       const sub = await storage.createSubscription({
         userId: user.id,
         productId,
         planId,
-        quantity: Number(quantity) || 1,
+        quantity: qty,
         status: "active",
         startDate: today,
+        discountCode: discountCode || null,
+        discountType: appliedDiscountType,
+        discountValue: appliedDiscountValue ? String(appliedDiscountValue) : null,
+        discountAmount: String(discountAmount.toFixed(2)),
+        taxPercent: String(taxPercent),
+        taxAmount: String(taxAmount.toFixed(2)),
+        subtotal: String(subtotal.toFixed(2)),
+        total: String(total.toFixed(2)),
       });
-
-      const plan = (await storage.getPlans()).find((p) => p.id === sub.planId);
-      const product = plan ? await storage.getProduct(plan.productId) : null;
 
       const dueDate = new Date();
       dueDate.setDate(dueDate.getDate() + 30);
 
+      const lines: { description: string; amount: number }[] = [
+        {
+          description: `${product?.name || "Product"} - ${plan?.name || "Plan"} x${qty}`,
+          amount: basePrice,
+        },
+      ];
+
+      if (discountAmount > 0 && discountLabel) {
+        lines.push({
+          description: `Discount: ${discountLabel}`,
+          amount: -discountAmount,
+        });
+      }
+
       await storage.createInvoice({
         subscriptionId: sub.id,
         userId: user.id,
-        amount: String(Number(plan?.price || 0) * sub.quantity),
+        amount: String(total.toFixed(2)),
         status: "pending",
         dueDate: dueDate.toISOString().split("T")[0],
-        lines: [
-          {
-            description: `${product?.name || "Product"} - ${plan?.name || "Plan"} x${sub.quantity}`,
-            amount: Number(plan?.price || 0) * sub.quantity,
-          },
-        ],
-        tax: String(Number(plan?.price || 0) * sub.quantity * 0.1),
+        lines,
+        tax: String(taxAmount.toFixed(2)),
+        discountAmount: String(discountAmount.toFixed(2)),
+        discountLabel: discountLabel,
+        taxPercent: String(taxPercent),
       });
 
       res.json(sub);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/discount-codes/validate", requireRole("user"), async (req: Request, res: Response) => {
+    const { code } = req.body;
+    if (!code) {
+      return res.status(400).json({ valid: false, message: "Code is required" });
+    }
+    const codeUpper = code.toUpperCase().trim();
+    const discount = VALID_DISCOUNT_CODES[codeUpper];
+    if (discount) {
+      res.json({ valid: true, ...discount });
+    } else {
+      res.json({ valid: false, message: "Invalid discount code" });
     }
   });
 
@@ -341,6 +424,55 @@ export async function registerRoutes(
         paidDate: today,
       });
       res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/quotation-templates", requireRole("admin"), async (req: Request, res: Response) => {
+    const user = (req as any).currentUser;
+    const all = await storage.getQuotationTemplates();
+    const mine = all.filter((t) => t.adminId === user.id);
+    res.json(mine);
+  });
+
+  app.post("/api/quotation-templates", requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const { name, validityDays, recurringPlanId, productLines } = req.body;
+
+      if (!name) {
+        return res.status(400).json({ message: "Template name is required" });
+      }
+
+      const template = await storage.createQuotationTemplate({
+        name,
+        validityDays: Number(validityDays) || 30,
+        recurringPlanId: recurringPlanId || null,
+        productLines: productLines || [],
+        adminId: user.id,
+        createdAt: new Date().toISOString().split("T")[0],
+      });
+      res.json(template);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/quotation-templates/:id", requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const template = await storage.getQuotationTemplate(req.params.id);
+
+      if (!template) {
+        return res.status(404).json({ message: "Template not found" });
+      }
+      if (template.adminId !== user.id) {
+        return res.status(403).json({ message: "Not your template" });
+      }
+
+      await storage.deleteQuotationTemplate(req.params.id);
+      res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

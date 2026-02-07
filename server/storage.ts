@@ -4,11 +4,11 @@ import {
   type Plan, type InsertPlan,
   type Subscription, type InsertSubscription,
   type Invoice, type InsertInvoice,
-  users, products, plans, subscriptions, invoices,
+  type QuotationTemplate, type InsertQuotationTemplate,
+  users, products, plans, subscriptions, invoices, quotationTemplates,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
-import { randomUUID } from "crypto";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -32,6 +32,11 @@ export interface IStorage {
   getInvoice(id: string): Promise<Invoice | undefined>;
   createInvoice(invoice: InsertInvoice): Promise<Invoice>;
   updateInvoice(id: string, data: Partial<Invoice>): Promise<Invoice | undefined>;
+
+  getQuotationTemplates(): Promise<QuotationTemplate[]>;
+  getQuotationTemplate(id: string): Promise<QuotationTemplate | undefined>;
+  createQuotationTemplate(template: InsertQuotationTemplate): Promise<QuotationTemplate>;
+  deleteQuotationTemplate(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -112,6 +117,24 @@ export class DatabaseStorage implements IStorage {
   async updateInvoice(id: string, data: Partial<Invoice>): Promise<Invoice | undefined> {
     const [updated] = await db.update(invoices).set(data).where(eq(invoices.id, id)).returning();
     return updated;
+  }
+
+  async getQuotationTemplates(): Promise<QuotationTemplate[]> {
+    return db.select().from(quotationTemplates);
+  }
+
+  async getQuotationTemplate(id: string): Promise<QuotationTemplate | undefined> {
+    const [template] = await db.select().from(quotationTemplates).where(eq(quotationTemplates.id, id));
+    return template;
+  }
+
+  async createQuotationTemplate(template: InsertQuotationTemplate): Promise<QuotationTemplate> {
+    const [created] = await db.insert(quotationTemplates).values(template).returning();
+    return created;
+  }
+
+  async deleteQuotationTemplate(id: string): Promise<void> {
+    await db.delete(quotationTemplates).where(eq(quotationTemplates.id, id));
   }
 }
 

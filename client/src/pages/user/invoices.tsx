@@ -145,8 +145,14 @@ export default function UserInvoices() {
               )}
 
               <div className="border-t pt-3 space-y-2">
+                {Number(selectedInvoice.discountAmount || 0) > 0 && (
+                  <div className="flex justify-between text-sm text-chart-2" data-testid="text-invoice-discount">
+                    <span>{selectedInvoice.discountLabel || "Discount"}</span>
+                    <span>-${Number(selectedInvoice.discountAmount).toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Tax</span>
+                  <span className="text-muted-foreground">Tax ({selectedInvoice.taxPercent || "18"}%)</span>
                   <span>${Number(selectedInvoice.tax || 0).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between font-semibold">

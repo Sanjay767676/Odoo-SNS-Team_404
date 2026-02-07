@@ -15,6 +15,7 @@ import NotFound from "@/pages/not-found";
 import AdminDashboard from "@/pages/admin/dashboard";
 import AdminProducts from "@/pages/admin/products";
 import AdminReports from "@/pages/admin/reports";
+import AdminQuotationTemplates from "@/pages/admin/quotation-templates";
 import InternalDashboard from "@/pages/internal/dashboard";
 import InternalInvoices from "@/pages/internal/invoices";
 import UserBrowse from "@/pages/user/browse";
@@ -61,6 +62,7 @@ function ProtectedLayout() {
             <Switch>
               <Route path="/admin" component={AdminDashboard} />
               <Route path="/admin/products" component={AdminProducts} />
+              <Route path="/admin/quotation-templates" component={AdminQuotationTemplates} />
               <Route path="/admin/reports" component={AdminReports} />
 
               <Route path="/internal" component={InternalDashboard} />
