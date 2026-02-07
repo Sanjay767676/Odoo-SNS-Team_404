@@ -1,19 +1,24 @@
 import { Switch, Route, Redirect, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AuthProvider, useAuth } from "@/lib/auth";
-import { ThemeProvider } from "@/lib/theme";
+import { ThemeProvider, useTheme } from "@/lib/theme";
 import { Loader2 } from "lucide-react";
+import { useEffect } from "react";
+import type { Company } from "@shared/schema";
 
 import LoginPage from "@/pages/login";
 import NotFound from "@/pages/not-found";
 import AdminDashboard from "@/pages/admin/dashboard";
 import AdminProducts from "@/pages/admin/products";
+import AdminSubscriptions from "@/pages/admin/subscriptions";
+import AdminInvoices from "@/pages/admin/invoices";
+import AdminPayments from "@/pages/admin/payments";
 import AdminReports from "@/pages/admin/reports";
 import AdminQuotationTemplates from "@/pages/admin/quotation-templates";
 import AdminSettings from "@/pages/admin/settings";
@@ -23,10 +28,24 @@ import UserBrowse from "@/pages/user/browse";
 import UserSubscriptions from "@/pages/user/subscriptions";
 import UserInvoices from "@/pages/user/invoices";
 import UserProfile from "@/pages/user/profile";
+import ForgotPassword from "@/pages/auth/forgot-password";
+import ResetPassword from "@/pages/auth/reset-password";
 
 function ProtectedLayout() {
   const { user, isLoading } = useAuth();
+  const { setPrimaryColor } = useTheme();
   const [location] = useLocation();
+
+  const { data: company } = useQuery<Company>({
+    queryKey: [user?.companyId ? `/api/companies/${user.companyId}` : null],
+    enabled: !!user?.companyId,
+  });
+
+  useEffect(() => {
+    if (company?.primaryColor) {
+      setPrimaryColor(company.primaryColor);
+    }
+  }, [company, setPrimaryColor]);
 
   if (isLoading) {
     return (
@@ -63,6 +82,9 @@ function ProtectedLayout() {
             <Switch>
               <Route path="/admin" component={AdminDashboard} />
               <Route path="/admin/products" component={AdminProducts} />
+              <Route path="/admin/subscriptions" component={AdminSubscriptions} />
+              <Route path="/admin/invoices" component={AdminInvoices} />
+              <Route path="/admin/payments" component={AdminPayments} />
               <Route path="/admin/quotation-templates" component={AdminQuotationTemplates} />
               <Route path="/admin/reports" component={AdminReports} />
               <Route path="/admin/settings" component={AdminSettings} />
@@ -90,7 +112,13 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <AuthProvider>
-            <ProtectedLayout />
+            <Switch>
+              <Route path="/forgot-password" component={ForgotPassword} />
+              <Route path="/reset-password" component={ResetPassword} />
+              <Route>
+                <ProtectedLayout />
+              </Route>
+            </Switch>
           </AuthProvider>
           <Toaster />
         </TooltipProvider>

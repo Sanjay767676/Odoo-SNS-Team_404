@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useAuth } from "@/lib/auth";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -164,6 +164,11 @@ export default function LoginPage() {
                     {loginForm.formState.errors.password && (
                       <p className="text-xs text-destructive">{loginForm.formState.errors.password.message}</p>
                     )}
+                    <div className="flex justify-end">
+                      <Link href="/forgot-password" title="Go to forgot password" data-testid="link-forgot-password">
+                        <span className="text-xs text-primary hover:underline cursor-pointer">Forgot password?</span>
+                      </Link>
+                    </div>
                   </div>
                   <Button type="submit" className="w-full" disabled={isSubmitting} data-testid="button-login-submit">
                     {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Login <ArrowRight className="ml-2 h-4 w-4" /></>}

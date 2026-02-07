@@ -54,6 +54,13 @@ const VALID_DISCOUNT_CODES: Record<string, { type: string; value: number; label:
   "FLAT500": { type: "fixed", value: 500, label: "Flat 500 off" },
 };
 
+async function generateNumber(prefix: string, type: 'subscription' | 'invoice'): Promise<string> {
+  const dateStr = new Date().toISOString().split('T')[0].replace(/-/g, '');
+  const items = type === 'subscription' ? await storage.getSubscriptions() : await storage.getInvoices();
+  const count = items.filter(i => (i.number || '').startsWith(`${prefix}-${dateStr}`)).length + 1;
+  return `${prefix}-${dateStr}-${String(count).padStart(3, '0')}`;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -175,11 +182,70 @@ export async function registerRoutes(
     });
   });
 
+  app.post("/api/auth/forgot-password", async (req: Request, res: Response) => {
+    try {
+      const { email } = req.body;
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        // For security, don't reveal if user exists
+        return res.json({ message: "If an account exists with this email, a reset link will be sent." });
+      }
+
+      const token = randomBytes(32).toString("hex");
+      const expiry = new Date(Date.now() + 3600000); // 1 hour
+      await storage.setUserResetToken(email, token, expiry);
+
+      // In real app, send actual email. Here we just log to console.
+      console.log(`[AUTH] Password reset requested for ${email}`);
+      console.log(`[AUTH] Reset Link: http://localhost:5000/reset-password?token=${token}`);
+
+      res.json({ message: "If an account exists with this email, a reset link will be sent." });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req: Request, res: Response) => {
+    try {
+      const { token, password } = req.body;
+      if (!token || !password) return res.status(400).json({ message: "Token and password are required" });
+
+      const user = await storage.getUserByResetToken(token);
+      if (!user) return res.status(400).json({ message: "Invalid or expired reset token" });
+
+      if (password.length < 8 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+        return res.status(400).json({ message: "Password must be 8+ chars with uppercase, lowercase, and special character" });
+      }
+
+      const hashedPassword = await hashPassword(password);
+      await storage.updateUser(user.id, {
+        password: hashedPassword,
+        resetToken: null,
+        resetTokenExpiry: null,
+      });
+
+      res.json({ message: "Password has been reset successfully." });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/users/internals", requireRole("admin"), async (req: Request, res: Response) => {
     const user = (req as any).currentUser;
     const internals = await storage.getInternalUsers(user.companyId);
     const safe = internals.map(({ password: _, ...u }) => u);
     res.json(safe);
+  });
+
+  app.get("/api/users", requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const allUsers = await storage.getUsers(user.companyId);
+      const safe = allUsers.map(({ password: _, ...u }) => u);
+      res.json(safe);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   app.post("/api/users/internals", requireRole("admin"), async (req: Request, res: Response) => {
@@ -339,14 +405,17 @@ export async function registerRoutes(
 
   app.get("/api/subscriptions", requireAuth, async (req: Request, res: Response) => {
     const user = (req as any).currentUser;
-    const allSubs = await storage.getSubscriptions(user.companyId);
+    let allSubs = await storage.getSubscriptions(user.companyId);
+    if (user.role === "user") {
+      allSubs = allSubs.filter(s => s.userId === user.id);
+    }
     res.json(allSubs);
   });
 
   app.post("/api/subscriptions", requireRole("user"), async (req: Request, res: Response) => {
     try {
       const user = (req as any).currentUser;
-      const { productId, planId, quantity, discountCode } = req.body;
+      const { productId, planId, quantity, discountCode, selectedVariants } = req.body;
 
       if (!productId || !planId) {
         return res.status(400).json({ message: "Product ID and plan ID are required" });
@@ -357,8 +426,20 @@ export async function registerRoutes(
         return res.status(404).json({ message: "Plan not found" });
       }
       const product = await storage.getProduct(plan.productId);
+      if (!product) return res.status(404).json({ message: "Product not found" });
+
       const qty = Number(quantity) || 1;
-      const basePrice = Number(plan.price) * qty;
+
+      let variantExtra = 0;
+      const productVariants = (product.variants as any[]) || [];
+      if (selectedVariants) {
+        Object.entries(selectedVariants).forEach(([attr, val]) => {
+          const v = productVariants.find(pv => pv.attribute === attr && pv.value === val);
+          if (v) variantExtra += Number(v.extraPrice || 0);
+        });
+      }
+
+      const basePrice = (Number(plan.price) + variantExtra) * qty;
 
       let appliedDiscountType: string | null = null;
       let appliedDiscountValue: number | null = null;
@@ -400,17 +481,22 @@ export async function registerRoutes(
       const total = subtotal + taxAmount;
 
       const today = new Date().toISOString().split("T")[0];
+      const subNumber = await generateNumber("SUB", "subscription");
+
       const sub = await storage.createSubscription({
+        number: subNumber,
         userId: user.id,
         productId,
         planId,
         quantity: qty,
-        status: "active",
+        status: "draft",
         startDate: today,
+        endDate: null,
         discountCode: discountCode || null,
         discountType: appliedDiscountType,
         discountValue: appliedDiscountValue ? String(appliedDiscountValue) : null,
         discountAmount: String(discountAmount.toFixed(2)),
+        selectedVariants: selectedVariants || null,
         taxPercent: String(taxPercent),
         taxAmount: String(taxAmount.toFixed(2)),
         subtotal: String(subtotal.toFixed(2)),
@@ -418,38 +504,7 @@ export async function registerRoutes(
         companyId: user.companyId,
       });
 
-      const dueDate = new Date();
-      dueDate.setDate(dueDate.getDate() + 30);
-
-      const lines: { description: string; amount: number }[] = [
-        {
-          description: `${product?.name || "Product"} - ${plan?.name || "Plan"} x${qty}`,
-          amount: basePrice,
-        },
-      ];
-
-      if (discountAmount > 0 && discountLabel) {
-        lines.push({
-          description: `Discount: ${discountLabel}`,
-          amount: -discountAmount,
-        });
-      }
-
-      await storage.createInvoice({
-        subscriptionId: sub.id,
-        userId: user.id,
-        amount: String(total.toFixed(2)),
-        status: "pending",
-        dueDate: dueDate.toISOString().split("T")[0],
-        lines,
-        tax: String(taxAmount.toFixed(2)),
-        discountAmount: String(discountAmount.toFixed(2)),
-        discountLabel: discountLabel,
-        taxPercent: String(taxPercent),
-        companyId: user.companyId,
-      });
-
-      res.json(sub);
+      res.status(201).json(sub);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -489,6 +544,80 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/subscriptions/:id/send-quote", requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const sub = await storage.getSubscription(id);
+      if (!sub) return res.status(404).json({ message: "Subscription not found" });
+
+      const updated = await storage.updateSubscription(id, { status: "quotation" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/subscriptions/:id/confirm", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const id = req.params.id as string;
+      const sub = await storage.getSubscription(id);
+      if (!sub) return res.status(404).json({ message: "Subscription not found" });
+
+      if (user.role !== 'admin' && sub.userId !== user.id) {
+        return res.status(403).json({ message: "Unauthorized" });
+      }
+
+      const product = await storage.getProduct(sub.productId);
+      const plan = await storage.getPlan(sub.planId);
+
+      const updated = await storage.updateSubscription(id, {
+        status: "active",
+        startDate: new Date().toISOString().split('T')[0]
+      });
+
+      const dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + 30);
+
+      let desc = `${product?.name || "Product"} - ${plan?.name || "Plan"} x${sub.quantity}`;
+      if (sub.selectedVariants) {
+        const variantStr = Object.entries(sub.selectedVariants as any).map(([k, v]) => `${k}: ${v}`).join(", ");
+        if (variantStr) desc += ` (${variantStr})`;
+      }
+
+      const lines: { description: string; amount: number }[] = [
+        {
+          description: desc,
+          amount: Number(sub.subtotal),
+        },
+      ];
+
+      if (Number(sub.discountAmount) > 0) {
+        lines.push({
+          description: `Discount: ${sub.discountCode || "Applied"}`,
+          amount: -Number(sub.discountAmount),
+        });
+      }
+
+      const invNumber = await generateNumber("INV", "invoice");
+
+      await storage.createInvoice({
+        number: invNumber,
+        subscriptionId: sub.id,
+        userId: sub.userId,
+        amount: sub.total || "0",
+        status: "pending",
+        dueDate: dueDate.toISOString().split("T")[0],
+        companyId: sub.companyId,
+        lines,
+      });
+
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/discount-codes/validate", requireRole("user"), async (req: Request, res: Response) => {
     const user = (req as any).currentUser;
     const { code } = req.body;
@@ -513,7 +642,10 @@ export async function registerRoutes(
 
   app.get("/api/invoices", requireAuth, async (req: Request, res: Response) => {
     const user = (req as any).currentUser;
-    const allInvoices = await storage.getInvoices(user.companyId);
+    let allInvoices = await storage.getInvoices(user.companyId);
+    if (user.role === "user") {
+      allInvoices = allInvoices.filter(i => i.userId === user.id);
+    }
     res.json(allInvoices);
   });
 
@@ -774,6 +906,19 @@ export async function registerRoutes(
   cron.schedule("0 0 * * *", async () => {
     try {
       console.log("[CRON] Running daily invoice generation...");
+      const allSubs = await storage.getSubscriptions();
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      let closed = 0;
+      for (const sub of allSubs) {
+        if (sub.status === "active" && sub.endDate && new Date(sub.endDate) < today) {
+          await storage.updateSubscription(sub.id, { status: "closed" });
+          closed++;
+        }
+      }
+      if (closed > 0) console.log(`[CRON] Closed ${closed} expired subscriptions`);
+
       const activeSubs = await storage.getActiveSubscriptions();
       const plans = await storage.getPlans();
       let generated = 0;
@@ -789,8 +934,6 @@ export async function registerRoutes(
         if (!lastInvoice) continue;
 
         const lastDue = new Date(lastInvoice.dueDate);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
 
         let shouldGenerate = false;
         if (plan.billingPeriod === "monthly") {
@@ -814,10 +957,22 @@ export async function registerRoutes(
         if (shouldGenerate) {
           const product = await storage.getProduct(sub.productId);
           const qty = sub.quantity;
-          const basePrice = Number(plan.price) * qty;
+          const basePrice = (Number(plan.price) + (sub.selectedVariants ? Object.values(sub.selectedVariants as any).length * 0 : 0)) * qty; // Variant pricing logic here too
+
+          // Re-calculating variant extra
+          let variantExtra = 0;
+          const productVariants = (product?.variants as any[]) || [];
+          if (sub.selectedVariants) {
+            Object.entries(sub.selectedVariants as any).forEach(([attr, val]) => {
+              const v = productVariants.find(pv => pv.attribute === attr && pv.value === val);
+              if (v) variantExtra += Number(v.extraPrice || 0);
+            });
+          }
+          const currentBasePrice = (Number(plan.price) + variantExtra) * qty;
+
           const taxPercent = Number(plan.taxPercent || 18);
-          const taxAmount = basePrice * taxPercent / 100;
-          const total = basePrice + taxAmount;
+          const taxAmount = currentBasePrice * taxPercent / 100;
+          const total = currentBasePrice + taxAmount;
 
           const dueDate = new Date();
           if (plan.billingPeriod === "monthly") dueDate.setMonth(dueDate.getMonth() + 1);
@@ -825,13 +980,16 @@ export async function registerRoutes(
           else if (plan.billingPeriod === "weekly") dueDate.setDate(dueDate.getDate() + 7);
           else dueDate.setDate(dueDate.getDate() + 1);
 
+          const invNumber = await generateNumber("INV", "invoice");
+
           await storage.createInvoice({
+            number: invNumber,
             subscriptionId: sub.id,
             userId: sub.userId,
             amount: String(total.toFixed(2)),
             status: "pending",
             dueDate: dueDate.toISOString().split("T")[0],
-            lines: [{ description: `${product?.name || "Product"} - ${plan.name} x${qty}`, amount: basePrice }],
+            lines: [{ description: `${product?.name || "Product"} - ${plan.name} x${qty}`, amount: currentBasePrice }],
             tax: String(taxAmount.toFixed(2)),
             taxPercent: String(taxPercent),
             companyId: sub.companyId,

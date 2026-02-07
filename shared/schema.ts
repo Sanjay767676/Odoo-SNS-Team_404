@@ -10,6 +10,8 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   role: text("role").notNull().default("user"),
   companyId: varchar("company_id"),
+  resetToken: text("reset_token"),
+  resetTokenExpiry: timestamp("reset_token_expiry"),
 });
 
 export const products = pgTable("products", {
@@ -47,6 +49,7 @@ export const plans = pgTable("plans", {
 
 export const subscriptions = pgTable("subscriptions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  number: text("number"),
   userId: varchar("user_id").notNull(),
   productId: varchar("product_id").notNull(),
   planId: varchar("plan_id").notNull(),
@@ -58,6 +61,7 @@ export const subscriptions = pgTable("subscriptions", {
   discountType: text("discount_type"),
   discountValue: numeric("discount_value"),
   discountAmount: numeric("discount_amount"),
+  selectedVariants: jsonb("selected_variants"),
   taxPercent: numeric("tax_percent"),
   taxAmount: numeric("tax_amount"),
   subtotal: numeric("subtotal"),
@@ -67,6 +71,7 @@ export const subscriptions = pgTable("subscriptions", {
 
 export const invoices = pgTable("invoices", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  number: text("number"),
   subscriptionId: varchar("subscription_id").notNull(),
   userId: varchar("user_id").notNull(),
   amount: numeric("amount").notNull(),

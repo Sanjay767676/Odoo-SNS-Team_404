@@ -32,6 +32,9 @@ import { Badge } from "@/components/ui/badge";
 const adminMenuItems = [
   { title: "Dashboard", url: "/admin", icon: LayoutDashboard },
   { title: "Products", url: "/admin/products", icon: Package },
+  { title: "Subscriptions", url: "/admin/subscriptions", icon: Layers },
+  { title: "Invoices", url: "/admin/invoices", icon: FileText },
+  { title: "Payments", url: "/admin/payments", icon: CreditCard },
   { title: "Quotation Templates", url: "/admin/quotation-templates", icon: FileCheck },
   { title: "Reports", url: "/admin/reports", icon: BarChart3 },
   { title: "Settings", url: "/admin/settings", icon: Settings },

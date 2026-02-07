@@ -13,18 +13,22 @@ import {
   companies, payments, discounts, taxes,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
-  getInternalUsers(companyId?: string): Promise<User[]>;
+  getInternalUsers(companyId: string): Promise<User[]>;
+  getUsers(companyId: string): Promise<User[]>;
 
   getProducts(companyId?: string): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
   updateProduct(id: string, data: Partial<Product>): Promise<Product | undefined>;
+  updateUser(id: string, data: Partial<User>): Promise<User | undefined>;
+  setUserResetToken(email: string, token: string, expiry: Date): Promise<void>;
+  getUserByResetToken(token: string): Promise<User | undefined>;
 
   getPlans(companyId?: string): Promise<Plan[]>;
   getPlan(id: string): Promise<Plan | undefined>;
@@ -85,12 +89,12 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async getInternalUsers(companyId?: string): Promise<User[]> {
-    const query = db.select().from(users).where(eq(users.role, "internal"));
-    if (companyId) {
-      return db.select().from(users).where(sql`${users.role} = 'internal' AND ${users.companyId} = ${companyId}`);
-    }
-    return query;
+  async getInternalUsers(companyId: string): Promise<User[]> {
+    return db.select().from(users).where(and(eq(users.companyId, companyId), eq(users.role, "internal")));
+  }
+
+  async getUsers(companyId: string): Promise<User[]> {
+    return db.select().from(users).where(eq(users.companyId, companyId));
   }
 
   async getProducts(companyId?: string): Promise<Product[]> {
@@ -113,6 +117,23 @@ export class DatabaseStorage implements IStorage {
   async updateProduct(id: string, data: Partial<Product>): Promise<Product | undefined> {
     const [updated] = await db.update(products).set(data).where(eq(products.id, id)).returning();
     return updated;
+  }
+
+  async updateUser(id: string, data: Partial<User>): Promise<User | undefined> {
+    const [updated] = await db.update(users).set(data).where(eq(users.id, id)).returning();
+    return updated;
+  }
+
+  async setUserResetToken(email: string, token: string, expiry: Date): Promise<void> {
+    await db.update(users).set({ resetToken: token, resetTokenExpiry: expiry }).where(eq(users.email, email));
+  }
+
+  async getUserByResetToken(token: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.resetToken, token));
+    if (!user || (user.resetTokenExpiry && user.resetTokenExpiry < new Date())) {
+      return undefined;
+    }
+    return user;
   }
 
   async getPlans(companyId?: string): Promise<Plan[]> {

@@ -30,6 +30,7 @@ export default function UserBrowse() {
   const [discountCode, setDiscountCode] = useState("");
   const [discountValidation, setDiscountValidation] = useState<{ valid: boolean; label?: string; type?: string; value?: number } | null>(null);
   const [validatingCode, setValidatingCode] = useState(false);
+  const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
 
   const { data: products, isLoading: loadingProducts } = useQuery<Product[]>({
     queryKey: ["/api/products"],
@@ -87,7 +88,20 @@ export default function UserBrowse() {
   };
 
   const selectedPlan = plans?.find((p) => p.id === selectedPlanId);
-  const basePrice = Number(selectedPlan?.price || 0) * (Number(quantity) || 1);
+
+  const getVariantExtraPrice = () => {
+    if (!selectedProduct) return 0;
+    const variants = (selectedProduct.variants as any[]) || [];
+    let extra = 0;
+    Object.entries(selectedVariants).forEach(([attr, val]) => {
+      const v = variants.find(variant => variant.attribute === attr && variant.value === val);
+      if (v) extra += Number(v.extraPrice || 0);
+    });
+    return extra;
+  };
+
+  const variantExtra = getVariantExtraPrice();
+  const basePrice = (Number(selectedPlan?.price || 0) + variantExtra) * (Number(quantity) || 1);
   const taxPercent = Number(selectedPlan?.taxPercent || 18);
 
   const getDiscountAmount = () => {
@@ -120,6 +134,7 @@ export default function UserBrowse() {
         planId: selectedPlanId,
         quantity: Number(quantity) || 1,
         discountCode: discountCode.trim() || null,
+        selectedVariants,
       });
       return res.json();
     },
@@ -300,6 +315,39 @@ export default function UserBrowse() {
                 <span className="text-muted-foreground">Base Price: </span>
                 <span className="font-medium">${Number(selectedProduct?.salesPrice || 0).toFixed(2)}</span>
               </div>
+
+              {selectedProduct && selectedProduct.variants && (selectedProduct.variants as any[]).length > 0 && (
+                <div className="space-y-3 py-2 bg-muted/30 p-3 rounded-md">
+                  <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Tag className="h-3 w-3" /> Select Variants
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {Array.from(new Set((selectedProduct.variants as any[]).map(v => v.attribute))).map(attr => (
+                      <div key={attr} className="space-y-1.5">
+                        <Label className="text-[11px] font-medium">{attr}</Label>
+                        <Select
+                          value={selectedVariants[attr] || ""}
+                          onValueChange={(val) => setSelectedVariants(prev => ({ ...prev, [attr]: val }))}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder={`Select ${attr}`} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(selectedProduct!.variants as any[])
+                              .filter(v => v.attribute === attr)
+                              .map(v => (
+                                <SelectItem key={v.value} value={v.value} className="text-xs">
+                                  {v.value} {Number(v.extraPrice) > 0 ? `(+$${v.extraPrice})` : ""}
+                                </SelectItem>
+                              ))
+                            }
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {selectedProduct && getProductPlans(selectedProduct.id).length > 0 && (
                 <div className="space-y-2">
