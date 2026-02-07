@@ -16,9 +16,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShoppingBag, Loader2, CheckCircle2, Building2, Tag, Percent } from "lucide-react";
+import { ShoppingBag, Loader2, CheckCircle2, Building2, Tag, Percent, DollarSign, CreditCard, Layers } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import type { Product, Plan } from "@shared/schema";
+import type { Product, Plan, Invoice, Subscription } from "@shared/schema";
 
 export default function UserBrowse() {
   const { user } = useAuth();
@@ -39,7 +39,29 @@ export default function UserBrowse() {
     queryKey: ["/api/plans"],
   });
 
+  const { data: invoices, isLoading: loadingInvoices } = useQuery<Invoice[]>({
+    queryKey: ["/api/invoices"],
+  });
+
+  const { data: subscriptions, isLoading: loadingSubs } = useQuery<Subscription[]>({
+    queryKey: ["/api/subscriptions"],
+  });
+
   const publishedProducts = products?.filter((p) => p.status === "published") || [];
+
+  const thisYear = new Date().getFullYear();
+  const totalSpentThisYear = invoices?.reduce((sum, inv) => {
+    if (inv.userId !== user?.id || inv.status !== "paid") return sum;
+    if (inv.paidDate) {
+      const pd = new Date(inv.paidDate);
+      if (pd.getFullYear() === thisYear) {
+        return sum + Number(inv.amount);
+      }
+    }
+    return sum;
+  }, 0) || 0;
+
+  const activeSubCount = subscriptions?.filter((s) => s.userId === user?.id && s.status === "active").length || 0;
 
   const getProductPlans = (productId: string) =>
     plans?.filter((p) => p.productId === productId) || [];
@@ -126,6 +148,37 @@ export default function UserBrowse() {
       <div>
         <h1 className="text-2xl font-bold">Browse Products</h1>
         <p className="text-sm text-muted-foreground mt-1">Discover and subscribe to products</p>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        {[
+          { label: "Total Spent This Year", value: `$${totalSpentThisYear.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: DollarSign, color: "text-chart-5", bgColor: "bg-chart-5/10", testId: "stat-total-spent-this-year" },
+          { label: "Active Subscriptions", value: activeSubCount, icon: CreditCard, color: "text-chart-4", bgColor: "bg-chart-4/10", testId: "stat-user-active-subs" },
+          { label: "Available Products", value: publishedProducts.length, icon: Layers, color: "text-primary", bgColor: "bg-primary/10", testId: "stat-available-products" },
+        ].map((stat) => (
+          <Card key={stat.label}>
+            <CardContent className="p-5">
+              {(loadingProducts || loadingInvoices || loadingSubs) ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-8 w-16" />
+                </div>
+              ) : (
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm text-muted-foreground">{stat.label}</p>
+                    <p className="text-2xl font-bold mt-1" data-testid={stat.testId}>
+                      {stat.value}
+                    </p>
+                  </div>
+                  <div className={`p-2 rounded-md ${stat.bgColor}`}>
+                    <stat.icon className={`h-5 w-5 ${stat.color}`} />
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       {loadingProducts ? (

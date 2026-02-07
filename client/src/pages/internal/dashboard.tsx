@@ -20,9 +20,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Package, Plus, Globe, Loader2, Calendar, ClipboardList } from "lucide-react";
+import { Package, Plus, Globe, Loader2, Calendar, ClipboardList, CreditCard, DollarSign, AlertTriangle, TrendingUp } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Product, Plan } from "@shared/schema";
+import type { Product, Plan, Subscription, Invoice } from "@shared/schema";
 
 const planSchema = z.object({
   name: z.string().min(1, "Plan name is required"),
@@ -57,9 +57,42 @@ export default function InternalDashboard() {
     queryKey: ["/api/plans"],
   });
 
+  const { data: subscriptions, isLoading: loadingSubs } = useQuery<Subscription[]>({
+    queryKey: ["/api/subscriptions"],
+  });
+
+  const { data: invoices, isLoading: loadingInvoices } = useQuery<Invoice[]>({
+    queryKey: ["/api/invoices"],
+  });
+
   const myProducts = products?.filter(
     (p) => p.assignedInternalId === user?.id && (p.status === "assigned" || p.status === "published")
   ) || [];
+
+  const myProductIds = new Set(myProducts.map((p) => p.id));
+
+  const mySubscriptions = subscriptions?.filter((s) => myProductIds.has(s.productId)) || [];
+  const activeSubCount = mySubscriptions.filter((s) => s.status === "active").length;
+
+  const myPlansTotal = plans?.filter((p) => myProductIds.has(p.productId)).length || 0;
+
+  const myRevenue = invoices?.reduce((sum, inv) => {
+    if (inv.status !== "paid") return sum;
+    const sub = subscriptions?.find((s) => s.id === inv.subscriptionId);
+    if (!sub || !myProductIds.has(sub.productId)) return sum;
+    return sum + Number(inv.amount);
+  }, 0) || 0;
+
+  const myOverdueCount = invoices?.filter((inv) => {
+    if (inv.status === "paid") return false;
+    const sub = subscriptions?.find((s) => s.id === inv.subscriptionId);
+    if (!sub || !myProductIds.has(sub.productId)) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(inv.dueDate);
+    due.setHours(0, 0, 0, 0);
+    return due < today;
+  }).length || 0;
 
   const form = useForm<PlanForm>({
     resolver: zodResolver(planSchema),
@@ -115,7 +148,7 @@ export default function InternalDashboard() {
   const getProductPlans = (productId: string) =>
     plans?.filter((p) => p.productId === productId) || [];
 
-  const isLoading = loadingProducts || loadingPlans;
+  const isLoading = loadingProducts || loadingPlans || loadingSubs || loadingInvoices;
 
   return (
     <div className="space-y-6">
@@ -126,6 +159,38 @@ export default function InternalDashboard() {
         <p className="text-sm text-muted-foreground mt-1">
           Manage assigned products and subscription plans.
         </p>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          { label: "Active Subscriptions", value: activeSubCount, icon: CreditCard, color: "text-chart-4", bgColor: "bg-chart-4/10" },
+          { label: "Total Plans", value: myPlansTotal, icon: TrendingUp, color: "text-chart-2", bgColor: "bg-chart-2/10" },
+          { label: "Total Revenue", value: `$${myRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: DollarSign, color: "text-chart-5", bgColor: "bg-chart-5/10" },
+          { label: "Overdue Invoices", value: myOverdueCount, icon: AlertTriangle, color: myOverdueCount > 0 ? "text-destructive" : "text-muted-foreground", bgColor: myOverdueCount > 0 ? "bg-destructive/10" : "bg-muted" },
+        ].map((stat) => (
+          <Card key={stat.label}>
+            <CardContent className="p-5">
+              {isLoading ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-8 w-16" />
+                </div>
+              ) : (
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm text-muted-foreground">{stat.label}</p>
+                    <p className="text-2xl font-bold mt-1" data-testid={`stat-internal-${stat.label.toLowerCase().replace(/\s/g, "-")}`}>
+                      {stat.value}
+                    </p>
+                  </div>
+                  <div className={`p-2 rounded-md ${stat.bgColor}`}>
+                    <stat.icon className={`h-5 w-5 ${stat.color}`} />
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       {isLoading ? (

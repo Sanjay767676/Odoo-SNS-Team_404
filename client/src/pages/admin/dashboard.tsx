@@ -1,20 +1,64 @@
 import { useAuth } from "@/lib/auth";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Package, DollarSign, Users, TrendingUp } from "lucide-react";
+import { Package, DollarSign, Users, TrendingUp, AlertTriangle, CreditCard } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Product } from "@shared/schema";
+import type { Product, Subscription, Invoice } from "@shared/schema";
 
 export default function AdminDashboard() {
   const { user } = useAuth();
 
-  const { data: products, isLoading } = useQuery<Product[]>({
+  const { data: products, isLoading: loadingProducts } = useQuery<Product[]>({
     queryKey: ["/api/products"],
   });
 
+  const { data: subscriptions, isLoading: loadingSubs } = useQuery<Subscription[]>({
+    queryKey: ["/api/subscriptions"],
+  });
+
+  const { data: invoices, isLoading: loadingInvoices } = useQuery<Invoice[]>({
+    queryKey: ["/api/invoices"],
+  });
+
+  const isLoading = loadingProducts || loadingSubs || loadingInvoices;
+
   const myProducts = products?.filter((p) => p.adminId === user?.id) || [];
+  const myProductIds = new Set(myProducts.map((p) => p.id));
   const publishedCount = myProducts.filter((p) => p.status === "published").length;
-  const assignedCount = myProducts.filter((p) => p.status === "assigned").length;
+
+  const activeSubscriptions = subscriptions?.filter(
+    (s) => myProductIds.has(s.productId) && s.status === "active"
+  ) || [];
+
+  const overdueInvoices = invoices?.filter((inv) => {
+    if (inv.status === "paid") return false;
+    const sub = subscriptions?.find((s) => s.id === inv.subscriptionId);
+    if (!sub || !myProductIds.has(sub.productId)) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(inv.dueDate);
+    due.setHours(0, 0, 0, 0);
+    return due < today;
+  }) || [];
+
+  const monthlyRevenue = (() => {
+    const now = new Date();
+    const thisMonth = now.getMonth();
+    const thisYear = now.getFullYear();
+    let total = 0;
+    invoices?.forEach((inv) => {
+      if (inv.status !== "paid") return;
+      const sub = subscriptions?.find((s) => s.id === inv.subscriptionId);
+      if (!sub || !myProductIds.has(sub.productId)) return;
+      if (inv.paidDate) {
+        const pd = new Date(inv.paidDate);
+        if (pd.getMonth() === thisMonth && pd.getFullYear() === thisYear) {
+          total += Number(inv.amount);
+        }
+      }
+    });
+    return total;
+  })();
 
   const stats = [
     {
@@ -32,18 +76,25 @@ export default function AdminDashboard() {
       bgColor: "bg-chart-2/10",
     },
     {
-      label: "Assigned",
-      value: assignedCount,
-      icon: Users,
+      label: "Active Subscriptions",
+      value: activeSubscriptions.length,
+      icon: CreditCard,
       color: "text-chart-4",
       bgColor: "bg-chart-4/10",
     },
     {
-      label: "Est. Revenue",
-      value: `$${myProducts.reduce((sum, p) => sum + Number(p.salesPrice || 0), 0).toLocaleString()}`,
+      label: "Monthly Revenue",
+      value: `$${monthlyRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       icon: DollarSign,
       color: "text-chart-5",
       bgColor: "bg-chart-5/10",
+    },
+    {
+      label: "Overdue Invoices",
+      value: overdueInvoices.length,
+      icon: AlertTriangle,
+      color: overdueInvoices.length > 0 ? "text-destructive" : "text-muted-foreground",
+      bgColor: overdueInvoices.length > 0 ? "bg-destructive/10" : "bg-muted",
     },
   ];
 
@@ -58,7 +109,7 @@ export default function AdminDashboard() {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {stats.map((stat) => (
           <Card key={stat.label}>
             <CardContent className="p-5">
