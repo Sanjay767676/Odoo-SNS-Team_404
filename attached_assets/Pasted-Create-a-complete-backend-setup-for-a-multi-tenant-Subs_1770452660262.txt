@@ -1,0 +1,34 @@
+Create a complete backend setup for a multi-tenant Subscription Management System using Node.js, Express, Prisma, PostgreSQL.
+
+Requirements:
+- Multi-tenant: every major table has companyId / tenantId field
+- 3 main roles: Admin (company admin), Internal (reviewer), User (subscriber)
+- Key models with fields (include relations & tenant isolation):
+
+User (id, email unique, password hashed, role: enum['ADMIN','INTERNAL','USER'], companyId, name)
+Company (id, name, logoUrl, primaryColor, createdById)
+Product (id, companyId, name, type, salesPrice, costPrice, variants JSON, status: 'DRAFT'|'ASSIGNED'|'PUBLISHED', assignedInternalId)
+RecurringPlan (id, productId, name, price, billingPeriod enum['DAILY','WEEKLY','MONTHLY','YEARLY'], minQuantity, startDate, endDate, options JSON {pausable, renewable, closable, autoClose})
+Subscription (id, number, userId, planId, companyId, startDate, expirationDate, status enum['DRAFT','QUOTATION','CONFIRMED','ACTIVE','CLOSED'], orderLines JSON)
+Invoice (id, subscriptionId, companyId, status enum['DRAFT','CONFIRMED','PAID'], amount, dueDate, lines JSON)
+Payment (id, invoiceId, amount, method, date)
+Discount (id, companyId, name, type enum['FIXED','PERCENTAGE'], value, minPurchase, minQuantity, startDate, endDate, limitUsage)
+Tax (id, companyId, percentage, type)
+
+- Use bcrypt for password hashing
+- Use JWT for authentication (login returns token with role + companyId)
+- Create middleware: protectRoute (verify JWT), restrictTo(role), restrictToCompany
+- Basic APIs (with role checks):
+  - POST /auth/login, /auth/signup
+  - POST /products (Admin only, own company)
+  - PATCH /products/:id/assign (Admin chooses internal from pool)
+  - GET /internal/assigned-products (Internal sees only his)
+  - POST /plans (Internal creates plan for assigned product)
+  - PATCH /products/:id/publish (Internal publishes)
+  - GET /products (User sees published products)
+  - POST /subscriptions (User subscribes)
+- Add node-cron example: daily job to generate invoices for active subscriptions
+- Use dotenv for secrets
+
+Generate full project structure, Prisma schema.prisma, index.js, controllers, middleware, and one example route.
+Use modern ES modules.
