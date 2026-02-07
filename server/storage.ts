@@ -13,32 +13,35 @@ import {
   companies, payments, discounts, taxes,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
-  getInternalUsers(): Promise<User[]>;
+  getInternalUsers(companyId?: string): Promise<User[]>;
 
-  getProducts(): Promise<Product[]>;
+  getProducts(companyId?: string): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
   updateProduct(id: string, data: Partial<Product>): Promise<Product | undefined>;
 
-  getPlans(): Promise<Plan[]>;
+  getPlans(companyId?: string): Promise<Plan[]>;
+  getPlan(id: string): Promise<Plan | undefined>;
   getPlansByProduct(productId: string): Promise<Plan[]>;
   createPlan(plan: InsertPlan): Promise<Plan>;
 
-  getSubscriptions(): Promise<Subscription[]>;
+  getSubscriptions(companyId?: string): Promise<Subscription[]>;
+  getSubscription(id: string): Promise<Subscription | undefined>;
   createSubscription(sub: InsertSubscription): Promise<Subscription>;
+  updateSubscription(id: string, data: Partial<Subscription>): Promise<Subscription | undefined>;
 
-  getInvoices(): Promise<Invoice[]>;
+  getInvoices(companyId?: string): Promise<Invoice[]>;
   getInvoice(id: string): Promise<Invoice | undefined>;
   createInvoice(invoice: InsertInvoice): Promise<Invoice>;
   updateInvoice(id: string, data: Partial<Invoice>): Promise<Invoice | undefined>;
 
-  getQuotationTemplates(): Promise<QuotationTemplate[]>;
+  getQuotationTemplates(companyId?: string): Promise<QuotationTemplate[]>;
   getQuotationTemplate(id: string): Promise<QuotationTemplate | undefined>;
   createQuotationTemplate(template: InsertQuotationTemplate): Promise<QuotationTemplate>;
   deleteQuotationTemplate(id: string): Promise<void>;
@@ -46,18 +49,19 @@ export interface IStorage {
   getCompanies(): Promise<Company[]>;
   getCompany(id: string): Promise<Company | undefined>;
   createCompany(company: InsertCompany): Promise<Company>;
+  updateCompany(id: string, data: Partial<Company>): Promise<Company | undefined>;
 
-  getPayments(): Promise<Payment[]>;
+  getPayments(companyId?: string): Promise<Payment[]>;
   getPaymentsByInvoice(invoiceId: string): Promise<Payment[]>;
   createPayment(payment: InsertPayment): Promise<Payment>;
 
-  getDiscounts(): Promise<Discount[]>;
+  getDiscounts(companyId?: string): Promise<Discount[]>;
   getDiscount(id: string): Promise<Discount | undefined>;
   createDiscount(discount: InsertDiscount): Promise<Discount>;
   updateDiscount(id: string, data: Partial<Discount>): Promise<Discount | undefined>;
   deleteDiscount(id: string): Promise<void>;
 
-  getTaxes(): Promise<Tax[]>;
+  getTaxes(companyId?: string): Promise<Tax[]>;
   getTax(id: string): Promise<Tax | undefined>;
   createTax(tax: InsertTax): Promise<Tax>;
   deleteTax(id: string): Promise<void>;
@@ -81,11 +85,18 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async getInternalUsers(): Promise<User[]> {
-    return db.select().from(users).where(eq(users.role, "internal"));
+  async getInternalUsers(companyId?: string): Promise<User[]> {
+    const query = db.select().from(users).where(eq(users.role, "internal"));
+    if (companyId) {
+      return db.select().from(users).where(sql`${users.role} = 'internal' AND ${users.companyId} = ${companyId}`);
+    }
+    return query;
   }
 
-  async getProducts(): Promise<Product[]> {
+  async getProducts(companyId?: string): Promise<Product[]> {
+    if (companyId) {
+      return db.select().from(products).where(eq(products.companyId, companyId));
+    }
     return db.select().from(products);
   }
 
@@ -95,7 +106,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createProduct(product: InsertProduct): Promise<Product> {
-    const [created] = await db.insert(products).values(product).returning();
+    const [created] = await db.insert(products).values(product as any).returning();
     return created;
   }
 
@@ -104,8 +115,16 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async getPlans(): Promise<Plan[]> {
+  async getPlans(companyId?: string): Promise<Plan[]> {
+    if (companyId) {
+      return db.select().from(plans).where(eq(plans.companyId, companyId));
+    }
     return db.select().from(plans);
+  }
+
+  async getPlan(id: string): Promise<Plan | undefined> {
+    const [plan] = await db.select().from(plans).where(eq(plans.id, id));
+    return plan;
   }
 
   async getPlansByProduct(productId: string): Promise<Plan[]> {
@@ -117,8 +136,16 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getSubscriptions(): Promise<Subscription[]> {
+  async getSubscriptions(companyId?: string): Promise<Subscription[]> {
+    if (companyId) {
+      return db.select().from(subscriptions).where(eq(subscriptions.companyId, companyId));
+    }
     return db.select().from(subscriptions);
+  }
+
+  async getSubscription(id: string): Promise<Subscription | undefined> {
+    const [sub] = await db.select().from(subscriptions).where(eq(subscriptions.id, id));
+    return sub;
   }
 
   async createSubscription(sub: InsertSubscription): Promise<Subscription> {
@@ -126,7 +153,15 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getInvoices(): Promise<Invoice[]> {
+  async updateSubscription(id: string, data: Partial<Subscription>): Promise<Subscription | undefined> {
+    const [updated] = await db.update(subscriptions).set(data).where(eq(subscriptions.id, id)).returning();
+    return updated;
+  }
+
+  async getInvoices(companyId?: string): Promise<Invoice[]> {
+    if (companyId) {
+      return db.select().from(invoices).where(eq(invoices.companyId, companyId));
+    }
     return db.select().from(invoices);
   }
 
@@ -136,7 +171,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createInvoice(invoice: InsertInvoice): Promise<Invoice> {
-    const [created] = await db.insert(invoices).values(invoice).returning();
+    const [created] = await db.insert(invoices).values(invoice as any).returning();
     return created;
   }
 
@@ -145,7 +180,10 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async getQuotationTemplates(): Promise<QuotationTemplate[]> {
+  async getQuotationTemplates(companyId?: string): Promise<QuotationTemplate[]> {
+    if (companyId) {
+      return db.select().from(quotationTemplates).where(eq(quotationTemplates.companyId, companyId));
+    }
     return db.select().from(quotationTemplates);
   }
 
@@ -155,7 +193,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createQuotationTemplate(template: InsertQuotationTemplate): Promise<QuotationTemplate> {
-    const [created] = await db.insert(quotationTemplates).values(template).returning();
+    const [created] = await db.insert(quotationTemplates).values(template as any).returning();
     return created;
   }
 
@@ -177,7 +215,15 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getPayments(): Promise<Payment[]> {
+  async updateCompany(id: string, data: Partial<Company>): Promise<Company | undefined> {
+    const [updated] = await db.update(companies).set(data).where(eq(companies.id, id)).returning();
+    return updated;
+  }
+
+  async getPayments(companyId?: string): Promise<Payment[]> {
+    if (companyId) {
+      return db.select().from(payments).where(eq(payments.companyId, companyId));
+    }
     return db.select().from(payments);
   }
 
@@ -190,7 +236,10 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getDiscounts(): Promise<Discount[]> {
+  async getDiscounts(companyId?: string): Promise<Discount[]> {
+    if (companyId) {
+      return db.select().from(discounts).where(eq(discounts.companyId, companyId));
+    }
     return db.select().from(discounts);
   }
 
@@ -213,7 +262,10 @@ export class DatabaseStorage implements IStorage {
     await db.delete(discounts).where(eq(discounts.id, id));
   }
 
-  async getTaxes(): Promise<Tax[]> {
+  async getTaxes(companyId?: string): Promise<Tax[]> {
+    if (companyId) {
+      return db.select().from(taxes).where(eq(taxes.companyId, companyId));
+    }
     return db.select().from(taxes);
   }
 

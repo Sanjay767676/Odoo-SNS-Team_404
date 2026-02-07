@@ -22,6 +22,7 @@ export const products = pgTable("products", {
   adminId: varchar("admin_id").notNull(),
   assignedInternalId: varchar("assigned_internal_id"),
   status: text("status").notNull().default("draft"),
+  companyId: varchar("company_id"),
   companyName: text("company_name"),
 });
 
@@ -41,6 +42,7 @@ export const plans = pgTable("plans", {
   discountType: text("discount_type"),
   discountValue: numeric("discount_value"),
   taxPercent: numeric("tax_percent").default("18"),
+  companyId: varchar("company_id"),
 });
 
 export const subscriptions = pgTable("subscriptions", {
@@ -60,6 +62,7 @@ export const subscriptions = pgTable("subscriptions", {
   taxAmount: numeric("tax_amount"),
   subtotal: numeric("subtotal"),
   total: numeric("total"),
+  companyId: varchar("company_id"),
 });
 
 export const invoices = pgTable("invoices", {
@@ -67,7 +70,7 @@ export const invoices = pgTable("invoices", {
   subscriptionId: varchar("subscription_id").notNull(),
   userId: varchar("user_id").notNull(),
   amount: numeric("amount").notNull(),
-  status: text("status").notNull().default("pending"),
+  status: text("status").notNull().default("draft"), // draft, pending, confirmed, paid, overdue, cancelled, sent, printed
   dueDate: text("due_date").notNull(),
   paidDate: text("paid_date"),
   lines: jsonb("lines").$type<{ description: string; amount: number }[]>().default([]),
@@ -75,6 +78,7 @@ export const invoices = pgTable("invoices", {
   discountAmount: numeric("discount_amount").default("0"),
   discountLabel: text("discount_label"),
   taxPercent: numeric("tax_percent").default("18"),
+  companyId: varchar("company_id"),
 });
 
 export const quotationTemplates = pgTable("quotation_templates", {
@@ -84,6 +88,7 @@ export const quotationTemplates = pgTable("quotation_templates", {
   recurringPlanId: varchar("recurring_plan_id"),
   productLines: jsonb("product_lines").$type<{ productId: string; productName: string; quantity: number; unitPrice: number }[]>().default([]),
   adminId: varchar("admin_id").notNull(),
+  companyId: varchar("company_id"),
   createdAt: text("created_at").notNull(),
 });
 
@@ -101,6 +106,7 @@ export const payments = pgTable("payments", {
   amount: numeric("amount").notNull(),
   method: text("method").notNull(),
   date: text("date").notNull(),
+  companyId: varchar("company_id"),
 });
 
 export const discounts = pgTable("discounts", {
@@ -115,6 +121,7 @@ export const discounts = pgTable("discounts", {
   endDate: text("end_date"),
   limitUsage: integer("limit_usage"),
   usedCount: integer("used_count").default(0),
+  active: boolean("active").default(true),
 });
 
 export const taxes = pgTable("taxes", {
@@ -123,6 +130,7 @@ export const taxes = pgTable("taxes", {
   name: text("name").notNull(),
   percentage: numeric("percentage").notNull(),
   type: text("type").notNull(),
+  active: boolean("active").default(true),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });

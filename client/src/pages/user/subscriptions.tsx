@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,11 +16,12 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { Layers, Calendar, Hash, Tag, Percent, ArrowUpCircle, CalendarClock } from "lucide-react";
+import { Layers, Calendar, Hash, Tag, Percent, ArrowUpCircle, CalendarClock, Loader2 } from "lucide-react";
 import type { Subscription, Product, Plan } from "@shared/schema";
 
 export default function UserSubscriptions() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [upgradeSub, setUpgradeSub] = useState<Subscription | null>(null);
   const [selectedUpgradePlan, setSelectedUpgradePlan] = useState("");
 
@@ -32,6 +35,22 @@ export default function UserSubscriptions() {
 
   const { data: plans } = useQuery<Plan[]>({
     queryKey: ["/api/plans"],
+  });
+
+  const upgradeMutation = useMutation({
+    mutationFn: async ({ subscriptionId, planId }: { subscriptionId: string; planId: string }) => {
+      const res = await apiRequest("PATCH", `/api/subscriptions/${subscriptionId}/upgrade`, { planId });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/subscriptions"] });
+      toast({ title: "Plan upgraded", description: "Your subscription plan has been updated successfully." });
+      setUpgradeSub(null);
+      setSelectedUpgradePlan("");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Upgrade failed", description: err.message, variant: "destructive" });
+    },
   });
 
   const mySubs = subscriptions?.filter((s) => s.userId === user?.id) || [];
@@ -255,14 +274,20 @@ export default function UserSubscriptions() {
 
                 <Button
                   className="w-full"
-                  disabled={!selectedUpgradePlan}
+                  disabled={!selectedUpgradePlan || upgradeMutation.isPending}
                   onClick={() => {
-                    setUpgradeSub(null);
-                    setSelectedUpgradePlan("");
+                    upgradeMutation.mutate({
+                      subscriptionId: upgradeSub.id,
+                      planId: selectedUpgradePlan,
+                    });
                   }}
                   data-testid="button-confirm-upgrade"
                 >
-                  <ArrowUpCircle className="h-4 w-4 mr-2" />
+                  {upgradeMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <ArrowUpCircle className="h-4 w-4 mr-2" />
+                  )}
                   Confirm Upgrade
                 </Button>
                 <p className="text-xs text-center text-muted-foreground">

@@ -27,7 +27,7 @@ const signupSchema = z.object({
     .regex(/[A-Z]/, "Must contain an uppercase letter")
     .regex(/[a-z]/, "Must contain a lowercase letter")
     .regex(/[^A-Za-z0-9]/, "Must contain a special character"),
-  role: z.enum(["admin", "internal", "user"]),
+  role: z.enum(["admin", "user"]),
 });
 
 type LoginForm = z.infer<typeof loginSchema>;
@@ -109,9 +109,8 @@ export default function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setIsSignup(false)}
-                  className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                    !isSignup ? "bg-background shadow-sm" : "text-muted-foreground"
-                  }`}
+                  className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${!isSignup ? "bg-background shadow-sm" : "text-muted-foreground"
+                    }`}
                   data-testid="button-login-tab"
                 >
                   Login
@@ -119,9 +118,8 @@ export default function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setIsSignup(true)}
-                  className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                    isSignup ? "bg-background shadow-sm" : "text-muted-foreground"
-                  }`}
+                  className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${isSignup ? "bg-background shadow-sm" : "text-muted-foreground"
+                    }`}
                   data-testid="button-signup-tab"
                 >
                   Sign Up
@@ -230,9 +228,8 @@ export default function LoginPage() {
                         <SelectValue placeholder="Select your role" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="admin">Company Admin</SelectItem>
-                        <SelectItem value="internal">Internal Reviewer</SelectItem>
-                        <SelectItem value="user">User / Subscriber</SelectItem>
+                        <SelectItem value="admin">Company Admin (Creates new company)</SelectItem>
+                        <SelectItem value="user">Individual User / Subscriber</SelectItem>
                       </SelectContent>
                     </Select>
                     {signupForm.formState.errors.role && (

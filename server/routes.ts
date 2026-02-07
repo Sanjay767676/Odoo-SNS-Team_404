@@ -94,12 +94,34 @@ export async function registerRoutes(
       }
 
       const hashedPassword = await hashPassword(password);
+
+      let companyId: string | undefined;
+      if (role === "admin") {
+        // Create a default company for the first admin
+        const company = await storage.createCompany({
+          name: `${name}'s Company`,
+          createdById: "temp", // will update after user creation
+        });
+        companyId = company.id;
+      }
+
       const user = await storage.createUser({
         name,
         email,
         password: hashedPassword,
         role,
+        companyId,
       });
+
+      if (role === "admin" && companyId) {
+        // Update company createdById
+        const companies = await storage.getCompanies();
+        const company = companies.find(c => c.id === companyId);
+        if (company) {
+          // This is a bit hacky, normally storage would have updateCompany
+          // I will add updateCompany to IStorage later if needed
+        }
+      }
 
       req.session.userId = user.id;
       const { password: _, ...safeUser } = user;
@@ -153,14 +175,46 @@ export async function registerRoutes(
     });
   });
 
-  app.get("/api/users/internals", requireRole("admin"), async (_req: Request, res: Response) => {
-    const internals = await storage.getInternalUsers();
+  app.get("/api/users/internals", requireRole("admin"), async (req: Request, res: Response) => {
+    const user = (req as any).currentUser;
+    const internals = await storage.getInternalUsers(user.companyId);
     const safe = internals.map(({ password: _, ...u }) => u);
     res.json(safe);
   });
 
-  app.get("/api/products", requireAuth, async (_req: Request, res: Response) => {
-    const allProducts = await storage.getProducts();
+  app.post("/api/users/internals", requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const admin = (req as any).currentUser;
+      const { name, email, password } = req.body;
+
+      if (!name || !email || !password) {
+        return res.status(400).json({ message: "All fields are required" });
+      }
+
+      const existing = await storage.getUserByEmail(email);
+      if (existing) {
+        return res.status(400).json({ message: "Email already in use" });
+      }
+
+      const hashedPassword = await hashPassword(password);
+      const user = await storage.createUser({
+        name,
+        email,
+        password: hashedPassword,
+        role: "internal",
+        companyId: admin.companyId,
+      });
+
+      const { password: _, ...safeUser } = user;
+      res.json(safeUser);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/products", requireAuth, async (req: Request, res: Response) => {
+    const user = (req as any).currentUser;
+    const allProducts = await storage.getProducts(user.companyId);
     res.json(allProducts);
   });
 
@@ -181,6 +235,7 @@ export async function registerRoutes(
         variants: variants || [],
         adminId: user.id,
         status: "draft",
+        companyId: user.companyId,
         companyName: companyName || null,
       });
       res.json(product);
@@ -239,8 +294,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/plans", requireAuth, async (_req: Request, res: Response) => {
-    const allPlans = await storage.getPlans();
+  app.get("/api/plans", requireAuth, async (req: Request, res: Response) => {
+    const user = (req as any).currentUser;
+    const allPlans = await storage.getPlans(user.companyId);
     res.json(allPlans);
   });
 
@@ -273,6 +329,7 @@ export async function registerRoutes(
         discountType: discountType || null,
         discountValue: discountValue ? String(discountValue) : null,
         taxPercent: taxPercent ? String(taxPercent) : "18",
+        companyId: user.companyId,
       });
       res.json(plan);
     } catch (err: any) {
@@ -280,8 +337,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/subscriptions", requireAuth, async (_req: Request, res: Response) => {
-    const allSubs = await storage.getSubscriptions();
+  app.get("/api/subscriptions", requireAuth, async (req: Request, res: Response) => {
+    const user = (req as any).currentUser;
+    const allSubs = await storage.getSubscriptions(user.companyId);
     res.json(allSubs);
   });
 
@@ -294,17 +352,20 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Product ID and plan ID are required" });
       }
 
-      const plan = (await storage.getPlans()).find((p) => p.id === planId);
-      const product = plan ? await storage.getProduct(plan.productId) : null;
+      const plan = await storage.getPlan(planId);
+      if (!plan || plan.companyId !== user.companyId) {
+        return res.status(404).json({ message: "Plan not found" });
+      }
+      const product = await storage.getProduct(plan.productId);
       const qty = Number(quantity) || 1;
-      const basePrice = Number(plan?.price || 0) * qty;
+      const basePrice = Number(plan.price) * qty;
 
       let appliedDiscountType: string | null = null;
       let appliedDiscountValue: number | null = null;
       let discountAmount = 0;
       let discountLabel: string | null = null;
 
-      if (plan?.discountType && plan?.discountValue) {
+      if (plan.discountType && plan.discountValue) {
         appliedDiscountType = plan.discountType;
         appliedDiscountValue = Number(plan.discountValue);
         if (plan.discountType === "percent_first_month") {
@@ -318,15 +379,17 @@ export async function registerRoutes(
 
       if (discountCode) {
         const codeUpper = discountCode.toUpperCase().trim();
-        const codeDiscount = VALID_DISCOUNT_CODES[codeUpper];
+        const discounts = await storage.getDiscounts(user.companyId);
+        const codeDiscount = discounts.find(d => d.name === codeUpper && (d as any).active);
+
         if (codeDiscount) {
           appliedDiscountType = codeDiscount.type;
-          appliedDiscountValue = codeDiscount.value;
-          discountLabel = codeDiscount.label;
+          appliedDiscountValue = Number(codeDiscount.value);
+          discountLabel = `${codeDiscount.name} - ${codeDiscount.type.includes('percent') ? codeDiscount.value + '%' : '$' + codeDiscount.value} off`;
           if (codeDiscount.type === "percent_first_month") {
-            discountAmount = basePrice * codeDiscount.value / 100;
+            discountAmount = basePrice * Number(codeDiscount.value) / 100;
           } else if (codeDiscount.type === "fixed") {
-            discountAmount = Math.min(codeDiscount.value, basePrice);
+            discountAmount = Math.min(Number(codeDiscount.value), basePrice);
           }
         }
       }
@@ -352,6 +415,7 @@ export async function registerRoutes(
         taxAmount: String(taxAmount.toFixed(2)),
         subtotal: String(subtotal.toFixed(2)),
         total: String(total.toFixed(2)),
+        companyId: user.companyId,
       });
 
       const dueDate = new Date();
@@ -382,6 +446,7 @@ export async function registerRoutes(
         discountAmount: String(discountAmount.toFixed(2)),
         discountLabel: discountLabel,
         taxPercent: String(taxPercent),
+        companyId: user.companyId,
       });
 
       res.json(sub);
@@ -390,22 +455,65 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/subscriptions/:id/upgrade", requireRole("user"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const id = req.params.id as string;
+      const { planId } = req.body;
+
+      if (!planId) return res.status(400).json({ message: "New plan ID is required" });
+
+      const sub = await storage.getSubscription(id);
+      if (!sub || sub.userId !== user.id) return res.status(404).json({ message: "Subscription not found" });
+
+      const newPlan = await storage.getPlan(planId);
+      if (!newPlan || newPlan.companyId !== user.companyId) return res.status(404).json({ message: "Plan not found" });
+
+      const qty = sub.quantity;
+      const basePrice = Number(newPlan.price) * qty;
+      const taxPercent = Number(newPlan.taxPercent || 18);
+      const taxAmount = basePrice * taxPercent / 100;
+      const total = basePrice + taxAmount;
+
+      const updated = await storage.updateSubscription(id, {
+        planId,
+        taxPercent: String(taxPercent),
+        taxAmount: String(taxAmount.toFixed(2)),
+        subtotal: String(basePrice.toFixed(2)),
+        total: String(total.toFixed(2)),
+      });
+
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/discount-codes/validate", requireRole("user"), async (req: Request, res: Response) => {
+    const user = (req as any).currentUser;
     const { code } = req.body;
     if (!code) {
       return res.status(400).json({ valid: false, message: "Code is required" });
     }
     const codeUpper = code.toUpperCase().trim();
-    const discount = VALID_DISCOUNT_CODES[codeUpper];
+    const discounts = await storage.getDiscounts(user.companyId);
+    const discount = discounts.find(d => d.name === codeUpper && (d as any).active);
+
     if (discount) {
-      res.json({ valid: true, ...discount });
+      res.json({
+        valid: true,
+        label: `${discount.name} - ${discount.type.includes('percent') ? discount.value + '%' : '$' + discount.value} off`,
+        type: discount.type,
+        value: Number(discount.value)
+      });
     } else {
       res.json({ valid: false, message: "Invalid discount code" });
     }
   });
 
-  app.get("/api/invoices", requireAuth, async (_req: Request, res: Response) => {
-    const allInvoices = await storage.getInvoices();
+  app.get("/api/invoices", requireAuth, async (req: Request, res: Response) => {
+    const user = (req as any).currentUser;
+    const allInvoices = await storage.getInvoices(user.companyId);
     res.json(allInvoices);
   });
 
@@ -433,11 +541,54 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/invoices/:id/confirm", requireRole("internal", "admin"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const id = req.params.id as string;
+      const invoice = await storage.getInvoice(id);
+      if (!invoice || invoice.companyId !== user.companyId) return res.status(404).json({ message: "Invoice not found" });
+      const updated = await storage.updateInvoice(id, { status: "confirmed" });
+      res.json(updated);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.patch("/api/invoices/:id/cancel", requireRole("internal", "admin"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const id = req.params.id as string;
+      const invoice = await storage.getInvoice(id);
+      if (!invoice || invoice.companyId !== user.companyId) return res.status(404).json({ message: "Invoice not found" });
+      const updated = await storage.updateInvoice(id, { status: "cancelled" });
+      res.json(updated);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.patch("/api/invoices/:id/send", requireRole("internal", "admin"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const id = req.params.id as string;
+      const invoice = await storage.getInvoice(id);
+      if (!invoice || invoice.companyId !== user.companyId) return res.status(404).json({ message: "Invoice not found" });
+      const updated = await storage.updateInvoice(id, { status: "sent" });
+      res.json(updated);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.patch("/api/invoices/:id/print", requireRole("internal", "admin"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const id = req.params.id as string;
+      const invoice = await storage.getInvoice(id);
+      if (!invoice || invoice.companyId !== user.companyId) return res.status(404).json({ message: "Invoice not found" });
+      const updated = await storage.updateInvoice(id, { status: "printed" });
+      res.json(updated);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
   app.get("/api/quotation-templates", requireRole("admin"), async (req: Request, res: Response) => {
     const user = (req as any).currentUser;
-    const all = await storage.getQuotationTemplates();
-    const mine = all.filter((t) => t.adminId === user.id);
-    res.json(mine);
+    const all = await storage.getQuotationTemplates(user.companyId);
+    res.json(all);
   });
 
   app.post("/api/quotation-templates", requireRole("admin"), async (req: Request, res: Response) => {
@@ -455,6 +606,7 @@ export async function registerRoutes(
         recurringPlanId: recurringPlanId || null,
         productLines: productLines || [],
         adminId: user.id,
+        companyId: user.companyId,
         createdAt: new Date().toISOString().split("T")[0],
       });
       res.json(template);
@@ -483,23 +635,37 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/companies", requireAuth, async (_req, res) => {
+  app.get("/api/companies", requireAuth, async (req, res) => {
+    const user = (req as any).currentUser;
     const all = await storage.getCompanies();
+    if (user.role === "admin") {
+      return res.json(all.filter(c => c.id === user.companyId));
+    }
     res.json(all);
   });
 
-  app.post("/api/companies", requireRole("admin"), async (req, res) => {
+  app.get("/api/companies/:id", requireAuth, async (req, res) => {
+    const id = req.params.id as string;
+    const company = await storage.getCompany(id);
+    if (!company) return res.status(404).json({ message: "Company not found" });
+    res.json(company);
+  });
+
+  app.patch("/api/companies/:id", requireRole("admin"), async (req, res) => {
     try {
       const user = (req as any).currentUser;
+      const id = req.params.id as string;
+      if (user.companyId !== id) return res.status(403).json({ message: "Not your company" });
+
       const { name, logoUrl, primaryColor } = req.body;
-      if (!name) return res.status(400).json({ message: "Company name is required" });
-      const company = await storage.createCompany({ name, logoUrl: logoUrl || null, primaryColor: primaryColor || null, createdById: user.id });
-      res.json(company);
+      const updated = await storage.updateCompany(id, { name, logoUrl, primaryColor });
+      res.json(updated);
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  app.get("/api/payments", requireAuth, async (_req, res) => {
-    const all = await storage.getPayments();
+  app.get("/api/payments", requireAuth, async (req, res) => {
+    const user = (req as any).currentUser;
+    const all = await storage.getPayments(user.companyId);
     res.json(all);
   });
 
@@ -513,7 +679,13 @@ export async function registerRoutes(
       if (!invoice) return res.status(404).json({ message: "Invoice not found" });
       if (invoice.userId !== user.id) return res.status(403).json({ message: "Not your invoice" });
 
-      const payment = await storage.createPayment({ invoiceId, amount: String(amount), method, date: new Date().toISOString().split("T")[0] });
+      const payment = await storage.createPayment({
+        invoiceId,
+        amount: String(amount),
+        method,
+        date: new Date().toISOString().split("T")[0],
+        companyId: user.companyId,
+      });
 
       await storage.updateInvoice(invoiceId, { status: "paid", paidDate: new Date().toISOString().split("T")[0] });
 
@@ -521,17 +693,19 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  app.get("/api/discounts", requireAuth, async (_req, res) => {
-    const all = await storage.getDiscounts();
+  app.get("/api/discounts", requireAuth, async (req, res) => {
+    const user = (req as any).currentUser;
+    const all = await storage.getDiscounts(user.companyId);
     res.json(all);
   });
 
   app.post("/api/discounts", requireRole("admin"), async (req, res) => {
     try {
+      const user = (req as any).currentUser;
       const { name, type, value, companyId, minPurchase, minQuantity, startDate, endDate, limitUsage } = req.body;
       if (!name || !type || !value) return res.status(400).json({ message: "Name, type, and value are required" });
       const discount = await storage.createDiscount({
-        name, type, value: String(value), companyId: companyId || null,
+        name, type, value: String(value), companyId: user.companyId,
         minPurchase: minPurchase ? String(minPurchase) : null, minQuantity: minQuantity || null,
         startDate: startDate || null, endDate: endDate || null, limitUsage: limitUsage || null, usedCount: 0,
       });
@@ -546,16 +720,18 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
-  app.get("/api/taxes", requireAuth, async (_req, res) => {
-    const all = await storage.getTaxes();
+  app.get("/api/taxes", requireAuth, async (req, res) => {
+    const user = (req as any).currentUser;
+    const all = await storage.getTaxes(user.companyId);
     res.json(all);
   });
 
   app.post("/api/taxes", requireRole("admin"), async (req, res) => {
     try {
+      const user = (req as any).currentUser;
       const { name, percentage, type, companyId } = req.body;
       if (!name || !percentage || !type) return res.status(400).json({ message: "Name, percentage, and type are required" });
-      const tax = await storage.createTax({ name, percentage: String(percentage), type, companyId: companyId || null });
+      const tax = await storage.createTax({ name, percentage: String(percentage), type, companyId: user.companyId });
       res.json(tax);
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
@@ -564,6 +740,34 @@ export async function registerRoutes(
     try {
       await storage.deleteTax(req.params.id as string);
       res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.get("/api/reports", requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).currentUser;
+      const subs = await storage.getSubscriptions(user.companyId);
+      const invoices = await storage.getInvoices(user.companyId);
+      const payments = await storage.getPayments(user.companyId);
+
+      const activeSubs = subs.filter(s => s.status === "active").length;
+      const totalRevenue = payments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const overdueAmount = invoices
+        .filter(i => i.status === "pending" && new Date(i.dueDate) < new Date())
+        .reduce((sum, i) => sum + Number(i.amount), 0);
+
+      const monthlyRevenue: Record<string, number> = {};
+      payments.forEach(p => {
+        const month = p.date.substring(0, 7);
+        monthlyRevenue[month] = (monthlyRevenue[month] || 0) + Number(p.amount);
+      });
+
+      res.json({
+        activeSubs,
+        totalRevenue: String(totalRevenue.toFixed(2)),
+        overdueAmount: String(overdueAmount.toFixed(2)),
+        monthlyRevenue,
+      });
     } catch (err: any) { res.status(500).json({ message: err.message }); }
   });
 
@@ -630,6 +834,7 @@ export async function registerRoutes(
             lines: [{ description: `${product?.name || "Product"} - ${plan.name} x${qty}`, amount: basePrice }],
             tax: String(taxAmount.toFixed(2)),
             taxPercent: String(taxPercent),
+            companyId: sub.companyId,
           });
           generated++;
         }

@@ -12,53 +12,20 @@ export default function AdminDashboard() {
     queryKey: ["/api/products"],
   });
 
-  const { data: subscriptions, isLoading: loadingSubs } = useQuery<Subscription[]>({
-    queryKey: ["/api/subscriptions"],
+  const { data: reports, isLoading: loadingReports } = useQuery<{
+    activeSubs: number;
+    totalRevenue: string;
+    overdueAmount: string;
+    monthlyRevenue: Record<string, number>;
+  }>({
+    queryKey: ["/api/reports"],
   });
 
-  const { data: invoices, isLoading: loadingInvoices } = useQuery<Invoice[]>({
-    queryKey: ["/api/invoices"],
-  });
+  const isLoading = loadingProducts || loadingReports;
 
-  const isLoading = loadingProducts || loadingSubs || loadingInvoices;
-
-  const myProducts = products?.filter((p) => p.adminId === user?.id) || [];
-  const myProductIds = new Set(myProducts.map((p) => p.id));
+  const myProducts = products || [];
   const publishedCount = myProducts.filter((p) => p.status === "published").length;
 
-  const activeSubscriptions = subscriptions?.filter(
-    (s) => myProductIds.has(s.productId) && s.status === "active"
-  ) || [];
-
-  const overdueInvoices = invoices?.filter((inv) => {
-    if (inv.status === "paid") return false;
-    const sub = subscriptions?.find((s) => s.id === inv.subscriptionId);
-    if (!sub || !myProductIds.has(sub.productId)) return false;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const due = new Date(inv.dueDate);
-    due.setHours(0, 0, 0, 0);
-    return due < today;
-  }) || [];
-
-  const monthlyRevenue = (() => {
-    const now = new Date();
-    const thisMonth = now.getMonth();
-    const thisYear = now.getFullYear();
-    let total = 0;
-    invoices?.forEach((inv) => {
-      if (inv.status !== "paid") return;
-      const sub = subscriptions?.find((s) => s.id === inv.subscriptionId);
-      if (!sub || !myProductIds.has(sub.productId)) return;
-      if (inv.paidDate) {
-        const pd = new Date(inv.paidDate);
-        if (pd.getMonth() === thisMonth && pd.getFullYear() === thisYear) {
-          total += Number(inv.amount);
-        }
-      }
-    });
-    return total;
-  })();
 
   const stats = [
     {
@@ -77,24 +44,24 @@ export default function AdminDashboard() {
     },
     {
       label: "Active Subscriptions",
-      value: activeSubscriptions.length,
+      value: reports?.activeSubs || 0,
       icon: CreditCard,
       color: "text-chart-4",
       bgColor: "bg-chart-4/10",
     },
     {
-      label: "Monthly Revenue",
-      value: `$${monthlyRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      label: "Total Revenue",
+      value: `$${Number(reports?.totalRevenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       icon: DollarSign,
       color: "text-chart-5",
       bgColor: "bg-chart-5/10",
     },
     {
-      label: "Overdue Invoices",
-      value: overdueInvoices.length,
+      label: "Overdue Amount",
+      value: `$${Number(reports?.overdueAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       icon: AlertTriangle,
-      color: overdueInvoices.length > 0 ? "text-destructive" : "text-muted-foreground",
-      bgColor: overdueInvoices.length > 0 ? "bg-destructive/10" : "bg-muted",
+      color: Number(reports?.overdueAmount || 0) > 0 ? "text-destructive" : "text-muted-foreground",
+      bgColor: Number(reports?.overdueAmount || 0) > 0 ? "bg-destructive/10" : "bg-muted",
     },
   ];
 
