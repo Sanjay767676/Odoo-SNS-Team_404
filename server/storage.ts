@@ -5,7 +5,12 @@ import {
   type Subscription, type InsertSubscription,
   type Invoice, type InsertInvoice,
   type QuotationTemplate, type InsertQuotationTemplate,
+  type Company, type InsertCompany,
+  type Payment, type InsertPayment,
+  type Discount, type InsertDiscount,
+  type Tax, type InsertTax,
   users, products, plans, subscriptions, invoices, quotationTemplates,
+  companies, payments, discounts, taxes,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
@@ -37,6 +42,27 @@ export interface IStorage {
   getQuotationTemplate(id: string): Promise<QuotationTemplate | undefined>;
   createQuotationTemplate(template: InsertQuotationTemplate): Promise<QuotationTemplate>;
   deleteQuotationTemplate(id: string): Promise<void>;
+
+  getCompanies(): Promise<Company[]>;
+  getCompany(id: string): Promise<Company | undefined>;
+  createCompany(company: InsertCompany): Promise<Company>;
+
+  getPayments(): Promise<Payment[]>;
+  getPaymentsByInvoice(invoiceId: string): Promise<Payment[]>;
+  createPayment(payment: InsertPayment): Promise<Payment>;
+
+  getDiscounts(): Promise<Discount[]>;
+  getDiscount(id: string): Promise<Discount | undefined>;
+  createDiscount(discount: InsertDiscount): Promise<Discount>;
+  updateDiscount(id: string, data: Partial<Discount>): Promise<Discount | undefined>;
+  deleteDiscount(id: string): Promise<void>;
+
+  getTaxes(): Promise<Tax[]>;
+  getTax(id: string): Promise<Tax | undefined>;
+  createTax(tax: InsertTax): Promise<Tax>;
+  deleteTax(id: string): Promise<void>;
+
+  getActiveSubscriptions(): Promise<Subscription[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -135,6 +161,78 @@ export class DatabaseStorage implements IStorage {
 
   async deleteQuotationTemplate(id: string): Promise<void> {
     await db.delete(quotationTemplates).where(eq(quotationTemplates.id, id));
+  }
+
+  async getCompanies(): Promise<Company[]> {
+    return db.select().from(companies);
+  }
+
+  async getCompany(id: string): Promise<Company | undefined> {
+    const [company] = await db.select().from(companies).where(eq(companies.id, id));
+    return company;
+  }
+
+  async createCompany(company: InsertCompany): Promise<Company> {
+    const [created] = await db.insert(companies).values(company).returning();
+    return created;
+  }
+
+  async getPayments(): Promise<Payment[]> {
+    return db.select().from(payments);
+  }
+
+  async getPaymentsByInvoice(invoiceId: string): Promise<Payment[]> {
+    return db.select().from(payments).where(eq(payments.invoiceId, invoiceId));
+  }
+
+  async createPayment(payment: InsertPayment): Promise<Payment> {
+    const [created] = await db.insert(payments).values(payment).returning();
+    return created;
+  }
+
+  async getDiscounts(): Promise<Discount[]> {
+    return db.select().from(discounts);
+  }
+
+  async getDiscount(id: string): Promise<Discount | undefined> {
+    const [discount] = await db.select().from(discounts).where(eq(discounts.id, id));
+    return discount;
+  }
+
+  async createDiscount(discount: InsertDiscount): Promise<Discount> {
+    const [created] = await db.insert(discounts).values(discount).returning();
+    return created;
+  }
+
+  async updateDiscount(id: string, data: Partial<Discount>): Promise<Discount | undefined> {
+    const [updated] = await db.update(discounts).set(data).where(eq(discounts.id, id)).returning();
+    return updated;
+  }
+
+  async deleteDiscount(id: string): Promise<void> {
+    await db.delete(discounts).where(eq(discounts.id, id));
+  }
+
+  async getTaxes(): Promise<Tax[]> {
+    return db.select().from(taxes);
+  }
+
+  async getTax(id: string): Promise<Tax | undefined> {
+    const [tax] = await db.select().from(taxes).where(eq(taxes.id, id));
+    return tax;
+  }
+
+  async createTax(tax: InsertTax): Promise<Tax> {
+    const [created] = await db.insert(taxes).values(tax).returning();
+    return created;
+  }
+
+  async deleteTax(id: string): Promise<void> {
+    await db.delete(taxes).where(eq(taxes.id, id));
+  }
+
+  async getActiveSubscriptions(): Promise<Subscription[]> {
+    return db.select().from(subscriptions).where(eq(subscriptions.status, "active"));
   }
 }
 

@@ -19,7 +19,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Package, Plus, Trash2, UserPlus, Loader2 } from "lucide-react";
+import { Package, Plus, Trash2, UserPlus, Loader2, Search } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Product, User } from "@shared/schema";
 
@@ -37,6 +37,7 @@ export default function AdminProducts() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [createOpen, setCreateOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [variants, setVariants] = useState<{ attribute: string; value: string; extraPrice: number }[]>([]);
   const [variantForm, setVariantForm] = useState({ attribute: "", value: "", extraPrice: "" });
 
@@ -49,6 +50,9 @@ export default function AdminProducts() {
   });
 
   const myProducts = products?.filter((p) => p.adminId === user?.id) || [];
+  const filteredProducts = searchQuery.trim()
+    ? myProducts.filter((p) => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || (p.companyName && p.companyName.toLowerCase().includes(searchQuery.toLowerCase())) || p.type.toLowerCase().includes(searchQuery.toLowerCase()))
+    : myProducts;
 
   const form = useForm<ProductForm>({
     resolver: zodResolver(productSchema),
@@ -110,6 +114,17 @@ export default function AdminProducts() {
           <h1 className="text-2xl font-bold">Products</h1>
           <p className="text-sm text-muted-foreground mt-1">Manage your product catalog</p>
         </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search products..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 w-[220px]"
+              data-testid="input-search-products"
+            />
+          </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
             <Button data-testid="button-create-product">
@@ -210,6 +225,7 @@ export default function AdminProducts() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {isLoading ? (
@@ -235,9 +251,17 @@ export default function AdminProducts() {
             </Button>
           </CardContent>
         </Card>
+      ) : filteredProducts.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center py-12">
+            <Search className="h-12 w-12 text-muted-foreground/40 mb-4" />
+            <h3 className="font-semibold text-lg mb-1">No matching products</h3>
+            <p className="text-sm text-muted-foreground">Try a different search term.</p>
+          </CardContent>
+        </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {myProducts.map((product) => (
+          {filteredProducts.map((product) => (
             <ProductCard
               key={product.id}
               product={product}

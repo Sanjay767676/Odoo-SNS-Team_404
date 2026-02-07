@@ -9,6 +9,7 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   name: text("name").notNull(),
   role: text("role").notNull().default("user"),
+  companyId: varchar("company_id"),
 });
 
 export const products = pgTable("products", {
@@ -86,12 +87,54 @@ export const quotationTemplates = pgTable("quotation_templates", {
   createdAt: text("created_at").notNull(),
 });
 
+export const companies = pgTable("companies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  logoUrl: text("logo_url"),
+  primaryColor: text("primary_color"),
+  createdById: varchar("created_by_id").notNull(),
+});
+
+export const payments = pgTable("payments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceId: varchar("invoice_id").notNull(),
+  amount: numeric("amount").notNull(),
+  method: text("method").notNull(),
+  date: text("date").notNull(),
+});
+
+export const discounts = pgTable("discounts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: varchar("company_id"),
+  name: text("name").notNull(),
+  type: text("type").notNull(),
+  value: numeric("value").notNull(),
+  minPurchase: numeric("min_purchase"),
+  minQuantity: integer("min_quantity"),
+  startDate: text("start_date"),
+  endDate: text("end_date"),
+  limitUsage: integer("limit_usage"),
+  usedCount: integer("used_count").default(0),
+});
+
+export const taxes = pgTable("taxes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: varchar("company_id"),
+  name: text("name").notNull(),
+  percentage: numeric("percentage").notNull(),
+  type: text("type").notNull(),
+});
+
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
 export const insertProductSchema = createInsertSchema(products).omit({ id: true });
 export const insertPlanSchema = createInsertSchema(plans).omit({ id: true });
 export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({ id: true });
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true });
 export const insertQuotationTemplateSchema = createInsertSchema(quotationTemplates).omit({ id: true });
+export const insertCompanySchema = createInsertSchema(companies).omit({ id: true });
+export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true });
+export const insertDiscountSchema = createInsertSchema(discounts).omit({ id: true });
+export const insertTaxSchema = createInsertSchema(taxes).omit({ id: true });
 
 export const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -118,3 +161,11 @@ export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
 export type Invoice = typeof invoices.$inferSelect;
 export type InsertQuotationTemplate = z.infer<typeof insertQuotationTemplateSchema>;
 export type QuotationTemplate = typeof quotationTemplates.$inferSelect;
+export type InsertCompany = z.infer<typeof insertCompanySchema>;
+export type Company = typeof companies.$inferSelect;
+export type InsertPayment = z.infer<typeof insertPaymentSchema>;
+export type Payment = typeof payments.$inferSelect;
+export type InsertDiscount = z.infer<typeof insertDiscountSchema>;
+export type Discount = typeof discounts.$inferSelect;
+export type InsertTax = z.infer<typeof insertTaxSchema>;
+export type Tax = typeof taxes.$inferSelect;

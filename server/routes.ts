@@ -4,6 +4,7 @@ import session from "express-session";
 import { storage } from "./storage";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
+import cron from "node-cron";
 
 const scryptAsync = promisify(scrypt);
 
@@ -191,7 +192,8 @@ export async function registerRoutes(
   app.patch("/api/products/:id/assign", requireRole("admin"), async (req: Request, res: Response) => {
     try {
       const user = (req as any).currentUser;
-      const product = await storage.getProduct(req.params.id);
+      const id = req.params.id as string;
+      const product = await storage.getProduct(id);
 
       if (!product) {
         return res.status(404).json({ message: "Product not found" });
@@ -205,7 +207,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Internal ID is required" });
       }
 
-      const updated = await storage.updateProduct(req.params.id, {
+      const updated = await storage.updateProduct(id, {
         assignedInternalId: internalId,
         status: "assigned",
       });
@@ -218,7 +220,8 @@ export async function registerRoutes(
   app.patch("/api/products/:id/publish", requireRole("internal"), async (req: Request, res: Response) => {
     try {
       const user = (req as any).currentUser;
-      const product = await storage.getProduct(req.params.id);
+      const id = req.params.id as string;
+      const product = await storage.getProduct(id);
 
       if (!product) {
         return res.status(404).json({ message: "Product not found" });
@@ -227,7 +230,7 @@ export async function registerRoutes(
         return res.status(403).json({ message: "Not assigned to you" });
       }
 
-      const updated = await storage.updateProduct(req.params.id, {
+      const updated = await storage.updateProduct(id, {
         status: "published",
       });
       res.json(updated);
@@ -409,7 +412,8 @@ export async function registerRoutes(
   app.patch("/api/invoices/:id/pay", requireRole("user"), async (req: Request, res: Response) => {
     try {
       const user = (req as any).currentUser;
-      const invoice = await storage.getInvoice(req.params.id);
+      const id = req.params.id as string;
+      const invoice = await storage.getInvoice(id);
 
       if (!invoice) {
         return res.status(404).json({ message: "Invoice not found" });
@@ -419,7 +423,7 @@ export async function registerRoutes(
       }
 
       const today = new Date().toISOString().split("T")[0];
-      const updated = await storage.updateInvoice(req.params.id, {
+      const updated = await storage.updateInvoice(id, {
         status: "paid",
         paidDate: today,
       });
@@ -462,7 +466,8 @@ export async function registerRoutes(
   app.delete("/api/quotation-templates/:id", requireRole("admin"), async (req: Request, res: Response) => {
     try {
       const user = (req as any).currentUser;
-      const template = await storage.getQuotationTemplate(req.params.id);
+      const id = req.params.id as string;
+      const template = await storage.getQuotationTemplate(id);
 
       if (!template) {
         return res.status(404).json({ message: "Template not found" });
@@ -471,10 +476,167 @@ export async function registerRoutes(
         return res.status(403).json({ message: "Not your template" });
       }
 
-      await storage.deleteQuotationTemplate(req.params.id);
+      await storage.deleteQuotationTemplate(id);
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/companies", requireAuth, async (_req, res) => {
+    const all = await storage.getCompanies();
+    res.json(all);
+  });
+
+  app.post("/api/companies", requireRole("admin"), async (req, res) => {
+    try {
+      const user = (req as any).currentUser;
+      const { name, logoUrl, primaryColor } = req.body;
+      if (!name) return res.status(400).json({ message: "Company name is required" });
+      const company = await storage.createCompany({ name, logoUrl: logoUrl || null, primaryColor: primaryColor || null, createdById: user.id });
+      res.json(company);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.get("/api/payments", requireAuth, async (_req, res) => {
+    const all = await storage.getPayments();
+    res.json(all);
+  });
+
+  app.post("/api/payments", requireRole("user"), async (req, res) => {
+    try {
+      const user = (req as any).currentUser;
+      const { invoiceId, amount, method } = req.body;
+      if (!invoiceId || !amount || !method) return res.status(400).json({ message: "Invoice ID, amount, and method are required" });
+
+      const invoice = await storage.getInvoice(invoiceId);
+      if (!invoice) return res.status(404).json({ message: "Invoice not found" });
+      if (invoice.userId !== user.id) return res.status(403).json({ message: "Not your invoice" });
+
+      const payment = await storage.createPayment({ invoiceId, amount: String(amount), method, date: new Date().toISOString().split("T")[0] });
+
+      await storage.updateInvoice(invoiceId, { status: "paid", paidDate: new Date().toISOString().split("T")[0] });
+
+      res.json(payment);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.get("/api/discounts", requireAuth, async (_req, res) => {
+    const all = await storage.getDiscounts();
+    res.json(all);
+  });
+
+  app.post("/api/discounts", requireRole("admin"), async (req, res) => {
+    try {
+      const { name, type, value, companyId, minPurchase, minQuantity, startDate, endDate, limitUsage } = req.body;
+      if (!name || !type || !value) return res.status(400).json({ message: "Name, type, and value are required" });
+      const discount = await storage.createDiscount({
+        name, type, value: String(value), companyId: companyId || null,
+        minPurchase: minPurchase ? String(minPurchase) : null, minQuantity: minQuantity || null,
+        startDate: startDate || null, endDate: endDate || null, limitUsage: limitUsage || null, usedCount: 0,
+      });
+      res.json(discount);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.delete("/api/discounts/:id", requireRole("admin"), async (req, res) => {
+    try {
+      await storage.deleteDiscount(req.params.id as string);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.get("/api/taxes", requireAuth, async (_req, res) => {
+    const all = await storage.getTaxes();
+    res.json(all);
+  });
+
+  app.post("/api/taxes", requireRole("admin"), async (req, res) => {
+    try {
+      const { name, percentage, type, companyId } = req.body;
+      if (!name || !percentage || !type) return res.status(400).json({ message: "Name, percentage, and type are required" });
+      const tax = await storage.createTax({ name, percentage: String(percentage), type, companyId: companyId || null });
+      res.json(tax);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.delete("/api/taxes/:id", requireRole("admin"), async (req, res) => {
+    try {
+      await storage.deleteTax(req.params.id as string);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  cron.schedule("0 0 * * *", async () => {
+    try {
+      console.log("[CRON] Running daily invoice generation...");
+      const activeSubs = await storage.getActiveSubscriptions();
+      const plans = await storage.getPlans();
+      let generated = 0;
+
+      for (const sub of activeSubs) {
+        const plan = plans.find(p => p.id === sub.planId);
+        if (!plan) continue;
+
+        const existingInvoices = await storage.getInvoices();
+        const subInvoices = existingInvoices.filter(inv => inv.subscriptionId === sub.id);
+        const lastInvoice = subInvoices.sort((a, b) => b.dueDate.localeCompare(a.dueDate))[0];
+
+        if (!lastInvoice) continue;
+
+        const lastDue = new Date(lastInvoice.dueDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        let shouldGenerate = false;
+        if (plan.billingPeriod === "monthly") {
+          const nextDue = new Date(lastDue);
+          nextDue.setMonth(nextDue.getMonth() + 1);
+          shouldGenerate = today >= nextDue;
+        } else if (plan.billingPeriod === "yearly") {
+          const nextDue = new Date(lastDue);
+          nextDue.setFullYear(nextDue.getFullYear() + 1);
+          shouldGenerate = today >= nextDue;
+        } else if (plan.billingPeriod === "weekly") {
+          const nextDue = new Date(lastDue);
+          nextDue.setDate(nextDue.getDate() + 7);
+          shouldGenerate = today >= nextDue;
+        } else if (plan.billingPeriod === "daily") {
+          const nextDue = new Date(lastDue);
+          nextDue.setDate(nextDue.getDate() + 1);
+          shouldGenerate = today >= nextDue;
+        }
+
+        if (shouldGenerate) {
+          const product = await storage.getProduct(sub.productId);
+          const qty = sub.quantity;
+          const basePrice = Number(plan.price) * qty;
+          const taxPercent = Number(plan.taxPercent || 18);
+          const taxAmount = basePrice * taxPercent / 100;
+          const total = basePrice + taxAmount;
+
+          const dueDate = new Date();
+          if (plan.billingPeriod === "monthly") dueDate.setMonth(dueDate.getMonth() + 1);
+          else if (plan.billingPeriod === "yearly") dueDate.setFullYear(dueDate.getFullYear() + 1);
+          else if (plan.billingPeriod === "weekly") dueDate.setDate(dueDate.getDate() + 7);
+          else dueDate.setDate(dueDate.getDate() + 1);
+
+          await storage.createInvoice({
+            subscriptionId: sub.id,
+            userId: sub.userId,
+            amount: String(total.toFixed(2)),
+            status: "pending",
+            dueDate: dueDate.toISOString().split("T")[0],
+            lines: [{ description: `${product?.name || "Product"} - ${plan.name} x${qty}`, amount: basePrice }],
+            tax: String(taxAmount.toFixed(2)),
+            taxPercent: String(taxPercent),
+          });
+          generated++;
+        }
+      }
+      console.log(`[CRON] Generated ${generated} invoices`);
+    } catch (err) {
+      console.error("[CRON] Invoice generation error:", err);
     }
   });
 
