@@ -12,6 +12,10 @@ export const users = pgTable("users", {
   companyId: varchar("company_id"),
   resetToken: text("reset_token"),
   resetTokenExpiry: timestamp("reset_token_expiry"),
+  isVerified: boolean("is_verified").default(false),
+  otp: text("otp"),
+  otpExpiry: timestamp("otp_expiry"),
+  googleId: text("google_id"),
 });
 
 export const products = pgTable("products", {

@@ -1,0 +1,8 @@
+2026-02-07T23:07:01.439Z [DEBUG] GET /internals - Admin Email: 10suriyagayathri@gmail.com, CompanyID: null
+2026-02-07T23:07:01.444Z [DEBUG] GET /internals - Found 4 internals for company: null
+2026-02-07T23:15:07.257Z [DEBUG] GET /internals - Admin Email: 10suriyagayathri@gmail.com, CompanyID: null
+2026-02-07T23:15:07.261Z [DEBUG] GET /internals - Found 0 internals for company: null
+2026-02-07T23:16:15.054Z [DEBUG] POST /internals - Creating user: ksanjuma1234@gmail.com, for Admin CompanyID: null
+2026-02-07T23:16:15.135Z [DEBUG] POST /internals - Created internal user ID: c22b3983-1586-461e-9e21-8a926f1d687f with CompanyID: null
+2026-02-07T23:16:15.144Z [DEBUG] GET /internals - Admin Email: 10suriyagayathri@gmail.com, CompanyID: null
+2026-02-07T23:16:15.146Z [DEBUG] GET /internals - Found 1 internals for company: null
