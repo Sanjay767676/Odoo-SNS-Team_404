@@ -32,5 +32,17 @@ A full-stack subscription management system with three distinct role-based porta
 
 ## Key Flows
 1. Admin creates product -> assigns to internal reviewer
-2. Internal adds subscription plans -> publishes product
-3. Users browse published products -> subscribe -> invoices generated
+2. Admin creates quotation templates with product lines and optional recurring plans
+3. Internal adds subscription plans with discount options and tax percentage -> publishes product
+4. Users browse published products -> apply discount codes -> subscribe with price breakdown -> invoices generated
+
+## Discount System
+- Plan-level discounts: "10% off first month", "Fixed ₹200 off" (set by internal reviewers)
+- User discount codes: FIRST10 (10%), SAVE200 (₹200), WELCOME15 (15%), FLAT500 (₹500)
+- Tax: Default 18% GST, configurable per plan
+- Price breakdown: Subtotal -> Discount -> Tax -> Total (stored in subscriptions and invoices)
+
+## Quotation Templates (Admin)
+- Templates with name, validity days, optional recurring plan, and product lines
+- Each product line has product, quantity, unit price, and calculated total
+- API: GET/POST /api/quotation-templates, DELETE /api/quotation-templates/:id
