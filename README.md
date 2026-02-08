@@ -1,7 +1,6 @@
 # SubHub - Subscription Management System
 
 Welcome to SubHub! This is a modern subscription marketplace and management system built with React, Express, and PostgreSQL (Drizzle ).
-Note To Run this you will need an PostgreSQL  Connection string use cloud (neon ) or else setup postgre on locally and create a DB Named= Subhub_DB
 ## Project Structure
 
 To make it easier for you to navigate, here is an overview of the folders:
@@ -38,3 +37,5 @@ To make it easier for you to navigate, here is an overview of the folders:
 - **Google Login**: One-click login with role detection.
 - **Product Workflow**: Admin creates -> Internal Approves -> User Subscribes.
 - **Real-time Search**: Search bar implemented for all users.
+
+  **Note To Run this you will need an PostgreSQL  Connection string use cloud (neon ) or else setup postgre on locally and create a DB Named= Subhub_DB**
